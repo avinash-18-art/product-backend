@@ -6,7 +6,6 @@ const fs = require("fs");
 const path = require("path");
 const cors = require("cors");
 const PDFDocument = require("pdfkit");
-require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -152,7 +151,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       fs.createReadStream(file.path)
         .pipe(csv())
         .on("data", (data) => rows.push(data))
-        .on("end", async () => {
+        .on("end", () => {
           fs.unlinkSync(file.path);
           saveData(rows, res);
         });
@@ -219,7 +218,6 @@ function saveData(rows, res) {
     };
   });
 
-  // Save in memory
   latestData = {
     submittedAt: new Date(),
     data: rows,
@@ -355,161 +353,114 @@ function drawTable(doc, { headers, rows }, options = {}) {
   return y; // last Y position
 }
 
-// ===== PDF Download API WITH Profit-By-Date Table =====
-app.get("/download-pdf", async (req, res) => {
-  try {
-    const result = await db
-      .collection("dashboard_data")
-      .find()
-      .sort({ submittedAt: -1 })
-      .limit(1)
-      .toArray();
+// ===== PDF Download API =====
+app.get("/download-pdf", (req, res) => {
+  if (!latestData) return res.status(404).json({ error: "No data found" });
 
-    if (!result.length) return res.status(404).json({ error: "No data found" });
+  const categorized = latestData.categories || {};
+  const totals = latestData.totals || {};
+  const profitByDate = Array.isArray(latestData.profitByDate)
+    ? [...latestData.profitByDate]
+    : [];
 
-    const latest = result[0];
-    const categorized = latest.categories || {};
-    const totals = latest.totals || {};
-    const profitByDate = Array.isArray(latest.profitByDate)
-      ? [...latest.profitByDate]
-      : [];
+  // sort dates ascending
+  profitByDate.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
 
-    // sort dates ascending for table
-    profitByDate.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader(
+    "Content-Disposition",
+    "attachment; filename=dashboard-report.pdf"
+  );
 
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=dashboard-report.pdf"
-    );
+  const doc = new PDFDocument({ margin: 40, size: "A4" });
+  doc.pipe(res);
 
-    const doc = new PDFDocument({ margin: 40, size: "A4" });
-    doc.pipe(res);
+  // Title
+  doc.fontSize(18).font("Helvetica-Bold").text("📊 Dashboard Report", { align: "center" });
+  doc.moveDown(0.5);
+  doc.fontSize(10).font("Helvetica").text(`Generated: ${new Date().toLocaleString()}`, { align: "center" });
+  doc.moveDown(1.5);
 
-    // Title + meta
-    doc
-      .fontSize(18)
-      .font("Helvetica-Bold")
-      .text("📊 Dashboard Report", { align: "center" });
-    doc.moveDown(0.5);
-    doc
-      .fontSize(10)
-      .font("Helvetica")
-      .text(`Generated: ${new Date().toLocaleString()}`, { align: "center" });
-    doc.moveDown(1.5);
+  // ===== Metrics Table =====
+  doc.font("Helvetica-Bold").fontSize(12).text("Summary Metrics");
+  doc.moveDown(0.5);
 
-    // ===== Metrics Table (2 columns) =====
-    doc.font("Helvetica-Bold").fontSize(12).text("Summary Metrics");
-    doc.moveDown(0.5);
+  const tableTop = doc.y + 6;
+  const cellHeight = 26;
+  const col1X = 60;
+  const col2X = 360;
+  const col1Width = 300;
+  const col2Width = 160;
 
-    const tableTop = doc.y + 6;
-    const cellHeight = 26;
-    const col1X = 60;
-    const col2X = 360;
-    const col1Width = 300;
-    const col2Width = 160;
+  // Header row
+  doc.rect(col1X, tableTop, col1Width, cellHeight).stroke();
+  doc.rect(col2X, tableTop, col2Width, cellHeight).stroke();
 
-    // Header row
-    doc.rect(col1X, tableTop, col1Width, cellHeight).stroke();
-    doc.rect(col2X, tableTop, col2Width, cellHeight).stroke();
+  doc.font("Helvetica-Bold").fontSize(10).text("Metric", col1X + 8, tableTop + 8).text("Value", col2X + 8, tableTop + 8);
 
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(10)
-      .text("Metric", col1X + 8, tableTop + 8)
-      .text("Value", col2X + 8, tableTop + 8);
+  const metrics = {
+    "All Orders": (categorized.all || []).length || 0,
+    "RTO": (categorized.rto || []).length || 0,
+    "Door Step Exchanged": (categorized.door_step_exchanged || []).length || 0,
+    "Delivered (count / discounted total)":
+      `${totals?.sellInMonthProducts || 0} / ${formatINR(totals?.deliveredSupplierDiscountedPriceTotal || 0)}`,
+    "Cancelled": (categorized.cancelled || []).length || 0,
+    "Pending": (categorized.ready_to_ship || []).length || 0,
+    "Shipped": (categorized.shipped || []).length || 0,
+    "Other": (categorized.other || []).length || 0,
+    "Supplier Listed Total Price": formatINR(totals?.totalSupplierListedPrice || 0),
+    "Supplier Discounted Total Price": formatINR(totals?.totalSupplierDiscountedPrice || 0),
+    "Total Profit": formatINR(totals?.totalProfit || 0),
+    "Profit %": `${totals?.profitPercent || "0.00"}%`,
+  };
 
-    const metrics = {
-      "All Orders": (categorized.all || []).length || 0,
-      "RTO": (categorized.rto || []).length || 0,
-      "Door Step Exchanged": (categorized.door_step_exchanged || []).length || 0,
-      "Delivered (count / discounted total)":
-        `${totals?.sellInMonthProducts || 0} /${formatINR(
-          totals?.deliveredSupplierDiscountedPriceTotal || 0
-        )}`,
-      "Cancelled": (categorized.cancelled || []).length || 0,
-      "Pending": (categorized.ready_to_ship || []).length || 0,
-      "Shipped": (categorized.shipped || []).length || 0,
-      "Other": (categorized.other || []).length || 0,
-      "Supplier Listed Total Price": formatINR(totals?.totalSupplierListedPrice || 0),
-      "Supplier Discounted Total Price": formatINR(
-        totals?.totalSupplierDiscountedPrice || 0
-      ),
-      "Total Profit": formatINR(totals?.totalProfit || 0),
-      "Profit %": `${totals?.profitPercent || "0.00"}%`,
-    };
+  doc.font("Helvetica").fontSize(10);
+  let y = tableTop + cellHeight;
 
-    doc.font("Helvetica").fontSize(10);
-    let rowIndex = 0;
-    let y = tableTop + cellHeight;
+  const bottomMargin = doc.page.height - 60;
 
-    const bottomMargin = doc.page.height - 60;
-
-    for (const [key, value] of Object.entries(metrics)) {
-      // page break if needed
-      if (y + cellHeight > bottomMargin) {
-        doc.addPage();
-        y = 60;
-
-        // redraw header on new page
-        doc.rect(col1X, y, col1Width, cellHeight).stroke();
-        doc.rect(col2X, y, col2Width, cellHeight).stroke();
-        doc
-          .font("Helvetica-Bold")
-          .text("Metric", col1X + 8, y + 8)
-          .text("Value", col2X + 8, y + 8);
-        y += cellHeight;
-        doc.font("Helvetica");
-      }
-
+  for (const [key, value] of Object.entries(metrics)) {
+    if (y + cellHeight > bottomMargin) {
+      doc.addPage();
+      y = 60;
       doc.rect(col1X, y, col1Width, cellHeight).stroke();
       doc.rect(col2X, y, col2Width, cellHeight).stroke();
-
-      doc.text(key, col1X + 8, y + 8, { width: col1Width - 16, ellipsis: true });
-      doc.text(String(value), col2X + 8, y + 8, {
-        width: col2Width - 16,
-        ellipsis: true,
-      });
-
+      doc.font("Helvetica-Bold").text("Metric", col1X + 8, y + 8).text("Value", col2X + 8, y + 8);
       y += cellHeight;
-      rowIndex++;
+      doc.font("Helvetica");
     }
 
-    doc.moveDown(2);
+    doc.rect(col1X, y, col1Width, cellHeight).stroke();
+    doc.rect(col2X, y, col2Width, cellHeight).stroke();
 
-    // ===== Profit By Date Table =====
-    doc.font("Helvetica-Bold").fontSize(12).text("Profit By Date");
-    doc.moveDown(0.5);
+    doc.text(key, col1X + 8, y + 8, { width: col1Width - 16, ellipsis: true });
+    doc.text(String(value), col2X + 8, y + 8, { width: col2Width - 16, ellipsis: true });
 
-    const headers = ["Date", "Profit"];
-    const rows = profitByDate.map((p) => [p.date, formatINR(p.profit || 0)]);
-
-    // If empty, still show an empty table
-    const tableData = {
-      headers,
-      rows: rows.length ? rows : [["—", "—"]],
-    };
-
-    drawTable(doc, tableData, {
-      startX: 60,
-      startY: doc.y + 6,
-      colWidths: [200, 140],
-      rowHeight: 24,
-      headerHeight: 26,
-      maxY: doc.page.height - 60,
-      fontSize: 10,
-    });
-
-    doc.end();
-  } catch (err) {
-    console.error("❌ PDF generation error:", err);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Failed to generate PDF" });
-    }
+    y += cellHeight;
   }
+
+  doc.moveDown(2);
+
+  // ===== Profit By Date Table =====
+  doc.font("Helvetica-Bold").fontSize(12).text("Profit By Date");
+  doc.moveDown(0.5);
+
+  const headers = ["Date", "Profit"];
+  const rows = profitByDate.map((p) => [p.date, formatINR(p.profit || 0)]);
+  const tableData = { headers, rows: rows.length ? rows : [["—", "—"]] };
+
+  drawTable(doc, tableData, {
+    startX: 60,
+    startY: doc.y + 6,
+    colWidths: [200, 140],
+    rowHeight: 24,
+    headerHeight: 26,
+    maxY: doc.page.height - 60,
+    fontSize: 10,
+  });
+
+  doc.end();
 });
 
 // ===== Start Server =====
-app.listen(PORT, () =>
-  console.log(`🚀 Server running on http://localhost:${PORT}`)
-);
+app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
