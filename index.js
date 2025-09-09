@@ -12,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({
-  origin :"https://product-report-263j.vercel.app",
+  origin :"https://product-frontend-murex-two.vercel.app",
   methods :["GET","POST","PUT","DELETE"],
   credentials: true
 }));
