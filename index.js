@@ -287,64 +287,226 @@ app.get("/filter/:subOrderNo", (req, res) => {
   });
 });
 
-// ===== PDF Download API =====
+/* ===== PDF Helpers ===== */
 function formatINR(n) {
   const num = Number(n) || 0;
   return "₹" + num.toLocaleString("en-IN");
 }
 
-app.get("/download-pdf", (req, res) => {
-  if (!latestData) return res.status(404).json({ error: "No data found" });
+function drawTable(doc, { headers, rows }, options = {}) {
+  const {
+    startX = 60,
+    startY = 120,
+    colWidths = [],
+    rowHeight = 26,
+    headerHeight = 28,
+    maxY = doc.page.height - 60,
+    headerFont = "Helvetica-Bold",
+    rowFont = "Helvetica",
+    fontSize = 10,
+    cellPaddingX = 8,
+  } = options;
 
-  const categorized = latestData.categories || {};
-  const totals = latestData.totals || {};
-  const profitByDate = Array.isArray(latestData.profitByDate)
-    ? [...latestData.profitByDate]
-    : [];
+  const cols = headers.length;
+  const widths =
+    colWidths.length === cols
+      ? colWidths
+      : Array(cols).fill(Math.floor((doc.page.width - startX * 2) / cols));
 
-  profitByDate.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
+  let y = startY;
 
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", "attachment; filename=dashboard-report.pdf");
+  function maybeAddPage(nextRowHeight) {
+    if (y + nextRowHeight > maxY) {
+      doc.addPage();
+      y = 60; // top margin on new page
+    }
+  }
 
-  const doc = new PDFDocument({ margin: 40, size: "A4" });
-  doc.pipe(res);
+  // Header
+  doc.font(headerFont).fontSize(fontSize);
+  maybeAddPage(headerHeight);
+  let x = startX;
+  for (let c = 0; c < cols; c++) {
+    doc.rect(x, y, widths[c], headerHeight).stroke();
+    doc.text(String(headers[c]), x + cellPaddingX, y + 8, {
+      width: widths[c] - cellPaddingX * 2,
+      ellipsis: true,
+    });
+    x += widths[c];
+  }
+  y += headerHeight;
 
-  doc.fontSize(18).font("Helvetica-Bold").text("📊 Dashboard Report", { align: "center" });
-  doc.moveDown(0.5);
-  doc.fontSize(10).font("Helvetica").text(`Generated: ${new Date().toLocaleString()}`, { align: "center" });
-  doc.moveDown(1.5);
-
-  doc.font("Helvetica-Bold").fontSize(12).text("Summary Metrics");
-  doc.moveDown(0.5);
-
-  const metrics = {
-    "All Orders": (categorized.all || []).length || 0,
-    "RTO": (categorized.rto || []).length || 0,
-    "Door Step Exchanged": (categorized.door_step_exchanged || []).length || 0,
-    "Delivered (count / discounted total)":
-      `${totals?.sellInMonthProducts || 0} /${formatINR(totals?.deliveredSupplierDiscountedPriceTotal || 0)}`,
-    "Cancelled": (categorized.cancelled || []).length || 0,
-    "Pending": (categorized.ready_to_ship || []).length || 0,
-    "Shipped": (categorized.shipped || []).length || 0,
-    "Other": (categorized.other || []).length || 0,
-    "Supplier Listed Total Price": formatINR(totals?.totalSupplierListedPrice || 0),
-    "Supplier Discounted Total Price": formatINR(totals?.totalSupplierDiscountedPrice || 0),
-    "Total Profit": formatINR(totals?.totalProfit || 0),
-    "Profit %": `${totals?.profitPercent || "0.00"}%`,
-  };
-
-  Object.entries(metrics).forEach(([k, v]) => {
-    doc.text(`${k}: ${v}`);
+  // Rows
+  doc.font(rowFont).fontSize(fontSize);
+  rows.forEach((row) => {
+    maybeAddPage(rowHeight);
+    let x = startX;
+    for (let c = 0; c < cols; c++) {
+      doc.rect(x, y, widths[c], rowHeight).stroke();
+      doc.text(String(row[c] ?? ""), x + cellPaddingX, y + 7, {
+        width: widths[c] - cellPaddingX * 2,
+        ellipsis: true,
+      });
+      x += widths[c];
+    }
+    y += rowHeight;
   });
 
-  doc.moveDown(2);
-  doc.font("Helvetica-Bold").fontSize(12).text("Profit By Date");
-  profitByDate.forEach((p) => {
-    doc.text(`${p.date}: ${formatINR(p.profit || 0)}`);
-  });
+  return y; // last Y position
+}
 
-  doc.end();
+// ===== PDF Download API WITH Profit-By-Date Table =====
+app.get("/download-pdf", async (req, res) => {
+  try {
+    const result = await db
+      .collection("dashboard_data")
+      .find()
+      .sort({ submittedAt: -1 })
+      .limit(1)
+      .toArray();
+
+    if (!result.length) return res.status(404).json({ error: "No data found" });
+
+    const latest = result[0];
+    const categorized = latest.categories || {};
+    const totals = latest.totals || {};
+    const profitByDate = Array.isArray(latest.profitByDate)
+      ? [...latest.profitByDate]
+      : [];
+
+    // sort dates ascending for table
+    profitByDate.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=dashboard-report.pdf"
+    );
+
+    const doc = new PDFDocument({ margin: 40, size: "A4" });
+    doc.pipe(res);
+
+    // Title + meta
+    doc
+      .fontSize(18)
+      .font("Helvetica-Bold")
+      .text("📊 Dashboard Report", { align: "center" });
+    doc.moveDown(0.5);
+    doc
+      .fontSize(10)
+      .font("Helvetica")
+      .text(`Generated: ${new Date().toLocaleString()}`, { align: "center" });
+    doc.moveDown(1.5);
+
+    // ===== Metrics Table (2 columns) =====
+    doc.font("Helvetica-Bold").fontSize(12).text("Summary Metrics");
+    doc.moveDown(0.5);
+
+    const tableTop = doc.y + 6;
+    const cellHeight = 26;
+    const col1X = 60;
+    const col2X = 360;
+    const col1Width = 300;
+    const col2Width = 160;
+
+    // Header row
+    doc.rect(col1X, tableTop, col1Width, cellHeight).stroke();
+    doc.rect(col2X, tableTop, col2Width, cellHeight).stroke();
+
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .text("Metric", col1X + 8, tableTop + 8)
+      .text("Value", col2X + 8, tableTop + 8);
+
+    const metrics = {
+      "All Orders": (categorized.all || []).length || 0,
+      "RTO": (categorized.rto || []).length || 0,
+      "Door Step Exchanged": (categorized.door_step_exchanged || []).length || 0,
+      "Delivered (count / discounted total)":
+        `${totals?.sellInMonthProducts || 0} /${formatINR(
+          totals?.deliveredSupplierDiscountedPriceTotal || 0
+        )}`,
+      "Cancelled": (categorized.cancelled || []).length || 0,
+      "Pending": (categorized.ready_to_ship || []).length || 0,
+      "Shipped": (categorized.shipped || []).length || 0,
+      "Other": (categorized.other || []).length || 0,
+      "Supplier Listed Total Price": formatINR(totals?.totalSupplierListedPrice || 0),
+      "Supplier Discounted Total Price": formatINR(
+        totals?.totalSupplierDiscountedPrice || 0
+      ),
+      "Total Profit": formatINR(totals?.totalProfit || 0),
+      "Profit %": `${totals?.profitPercent || "0.00"}%`,
+    };
+
+    doc.font("Helvetica").fontSize(10);
+    let rowIndex = 0;
+    let y = tableTop + cellHeight;
+
+    const bottomMargin = doc.page.height - 60;
+
+    for (const [key, value] of Object.entries(metrics)) {
+      // page break if needed
+      if (y + cellHeight > bottomMargin) {
+        doc.addPage();
+        y = 60;
+
+        // redraw header on new page
+        doc.rect(col1X, y, col1Width, cellHeight).stroke();
+        doc.rect(col2X, y, col2Width, cellHeight).stroke();
+        doc
+          .font("Helvetica-Bold")
+          .text("Metric", col1X + 8, y + 8)
+          .text("Value", col2X + 8, y + 8);
+        y += cellHeight;
+        doc.font("Helvetica");
+      }
+
+      doc.rect(col1X, y, col1Width, cellHeight).stroke();
+      doc.rect(col2X, y, col2Width, cellHeight).stroke();
+
+      doc.text(key, col1X + 8, y + 8, { width: col1Width - 16, ellipsis: true });
+      doc.text(String(value), col2X + 8, y + 8, {
+        width: col2Width - 16,
+        ellipsis: true,
+      });
+
+      y += cellHeight;
+      rowIndex++;
+    }
+
+    doc.moveDown(2);
+
+    // ===== Profit By Date Table =====
+    doc.font("Helvetica-Bold").fontSize(12).text("Profit By Date");
+    doc.moveDown(0.5);
+
+    const headers = ["Date", "Profit"];
+    const rows = profitByDate.map((p) => [p.date, formatINR(p.profit || 0)]);
+
+    // If empty, still show an empty table
+    const tableData = {
+      headers,
+      rows: rows.length ? rows : [["—", "—"]],
+    };
+
+    drawTable(doc, tableData, {
+      startX: 60,
+      startY: doc.y + 6,
+      colWidths: [200, 140],
+      rowHeight: 24,
+      headerHeight: 26,
+      maxY: doc.page.height - 60,
+      fontSize: 10,
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error("❌ PDF generation error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to generate PDF" });
+    }
+  }
 });
 
 // ===== Start Server =====
