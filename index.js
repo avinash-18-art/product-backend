@@ -60,27 +60,27 @@ app.post("/signup", async (req, res) => {
     // Twilio client
 
 
-    // const twilioClient = twilio(
-    //   process.env.TWILIO_ACCOUNT_SID,
-    //   process.env.TWILIO_AUTH_TOKEN
-    // );
+    const twilioClient = twilio(
+      process.env.TWILIO_ACCOUNT_SID,
+      process.env.TWILIO_AUTH_TOKEN
+    );
 
-    // // Send OTP via SMS
-    // try {
-    //   const message = await twilioClient.messages.create({
-    //     body: `Your OTP is ${otp}`,
-    //     from: process.env.TWILIO_FROM_NUMBER,
-    //     to: phoneNumber,
-    //   });
-    //   console.log("OTP SMS sent:", message.sid);
-    // } catch (error) {
-    //   console.error("Twilio error:", error.message);
-    // }
+    // Send OTP via SMS
+    try {
+      const message = await twilioClient.messages.create({
+        body: `Your OTP is ${otp}`,
+        from: process.env.TWILIO_FROM_NUMBER,
+        to: phoneNumber,
+      });
+      console.log("OTP SMS sent:", message.sid);
+    } catch (error) {
+      console.error("Twilio error:", error.message);
+    }
 
 
 
     // ✅ Send OTP via Email (Nodemailer)
-    
+
     try {
       const transporter = nodemailer.createTransport({
         service: "gmail",
