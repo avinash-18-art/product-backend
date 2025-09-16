@@ -42,7 +42,7 @@ mongoose.connect("mongodb://localhost:27017/formate", {
 const User = require("./models/User");
 
 // signup
-// signup route
+
 app.post("/signup", async (req, res) => {
   try {
     const { fullname, email, phoneNumber, password } = req.body;
