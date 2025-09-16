@@ -1,4 +1,3 @@
-
 const express = require("express");
 const multer = require("multer");
 const XLSX = require("xlsx");
@@ -7,22 +6,171 @@ const fs = require("fs");
 const path = require("path");
 const cors = require("cors");
 const PDFDocument = require("pdfkit");
+const bcrypt = require("bcrypt");
+const nodemailer = require("nodemailer");
+const twilio = require("twilio");
+const jwt = require("jsonwebtoken");
+const dotenv = require("dotenv");
+const mongoose = require("mongoose");
+
+// Load .env file
+require("dotenv").config();
+dotenv.config(); 
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const secretKey = "apjabdulkalam@545";
 
+// Middleware
 app.use(cors({
-  origin :"https://meesho-frontend-no7l.vercel.app",
-  methods :["GET","POST","PUT","DELETE"],
+  origin:  "https://meesho-frontend-no7l.vercel.app", // frontend URL
+  methods: ["GET", "POST", "PUT", "DELETE"],
   credentials: true
 }));
-app.use(cors({
-  origin : "*"
-}))
 app.use(express.json());
+
+// File upload
 const upload = multer({ dest: "uploads/" });
 
-// ===== In-memory storage =====
+mongoose.connect("mongodb://localhost:27017/formate", {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log("✅ MongoDB Connected"))
+.catch(() => console.log("❌ MongoDB Disconnected"));
+
+const User = require("./models/User");
+
+// signup
+// signup route
+app.post("/signup", async (req, res) => {
+  try {
+    const { fullname, email, phoneNumber, password } = req.body;
+
+    // Check if user already exists
+    const existUser = await User.findOne({ email });
+    if (existUser) {
+      return res.status(400).send({ message: "User already registered" });
+    }
+
+    // Hash password & generate OTP
+    const hashPassword = await bcrypt.hash(password, 10);
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // ✅ Twilio client
+    const twilioClient = twilio(
+      process.env.TWILIO_ACCOUNT_SID,
+      process.env.TWILIO_AUTH_TOKEN
+    );
+
+    // Send OTP via SMS
+    try {
+      const message = await twilioClient.messages.create({
+        body: `Your OTP is ${otp}`,
+        from: process.env.TWILIO_FROM_NUMBER,
+        to: phoneNumber,
+      });
+      console.log("✅ OTP SMS sent:", message.sid);
+    } catch (error) {
+      console.error("❌ Twilio error:", error.message);
+    }
+
+    // ✅ Send OTP via Email (Nodemailer)
+    try {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS,
+        },
+      });
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: "Your OTP Code",
+        text: `Your OTP is ${otp}`,
+      });
+
+      console.log("✅ OTP Email sent to:", email);
+    } catch (error) {
+      console.error("❌ Nodemailer error:", error.message);
+    }
+
+    // Save new user in MongoDB
+    const newUser = new User({
+      fullname,
+      email,
+      phoneNumber,
+      otp,
+      password: hashPassword,
+    });
+
+    await newUser.save();
+
+    res.send({ message: "Registration successful, OTP sent" });
+  } catch (err) {
+    console.error("❌ Registration failed:", err.message);
+    res
+      .status(500)
+      .send({ message: "Registration failed", error: err.message });
+  }
+});
+
+
+
+app.post('/verify-otp', async (req, res) => {
+  const { email, otp } = req.body;
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.json({ message: "User not found", success: false });
+    }
+
+    if (user.otp === otp) {
+      return res.json({ message: "OTP verified successfully", success: true });
+    } else {
+      return res.json({ message: "Invalid OTP", success: false });
+    }
+  } catch (error) {
+    res.json({ message: "Internal server error", success: false });
+  }
+});
+
+app.post('/login',async (req,res)=>{
+    const{email,password}= req.body 
+    const user = await User.findOne({email})
+    if(!user){
+        return res.json({message:"the user not found"})
+    }
+    const isValidPassword= await bcrypt.compare(password,user.password)
+    if(!isValidPassword){
+        return res.send({message:"user is creditional"})
+    }
+    const token = jwt.sign({fullname:user.fullname,email:user.email,phoneNumber:user.phoneNumber},secretKey,{expiresIn:"1h"})
+    res.send({message:"login successful",token})
+})
+
+function verifyToken(req,res,next){
+    const authHeader = req.headers.authorization 
+    if(!authHeader||!authHeader.startsWith("Bearer "))
+        return res.json({message:"token required"})
+    const token = authHeader.split(' ')[1]
+    jwt.verify(token,secretKey,(error,decode)=>{
+        if(error){
+            res.send({message:"invalid token"})
+        }
+        req.user = decode 
+        next()
+    })
+}
+
+app.get("/profile",verifyToken,(req,res)=>{
+    res.send({message:"welcome to our profile",user:req.user})
+})
+
+
 let latestData = null;
 
 // ===== Status list =====
@@ -465,3 +613,4 @@ app.get("/download-pdf", (req, res) => {
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+

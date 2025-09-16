@@ -11,17 +11,22 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "csv": "^6.4.1",
     "csv-parser": "^3.2.0",
-    "dotenv": "^17.2.1",
+    "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "fs": "^0.0.1-security",
-    "mongoose": "^8.17.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.19.0",
+    "mongoose": "^8.18.1",
     "multer": "^2.0.2",
+    "nodemailer": "^7.0.6",
     "path": "^0.12.7",
     "pdfkit": "^0.17.1",
     "pdfkit-table": "^0.1.99",
+    "twilio": "^5.9.0",
     "xlsx": "^0.18.5"
   }
 }
