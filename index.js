@@ -80,13 +80,13 @@ app.post("/signup", async (req, res) => {
       const transporter = nodemailer.createTransport({
         service: "gmail",
         auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS,
+          user: "chauhanavinash36869@gmail.com",
+          pass: "jglr abus ujrk tqal",
         },
       });
 
       await transporter.sendMail({
-        from: process.env.EMAIL_USER,
+        from: "chauhanavinash36869@gmail.com",
         to: email,
         subject: "Your OTP Code",
         text: `Your OTP is ${otp}`,
