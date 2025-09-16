@@ -81,26 +81,27 @@ app.post("/signup", async (req, res) => {
 
     // ✅ Send OTP via Email (Nodemailer)
 
-    try {
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: "chauhanavinash36869@gmail.com",
-          pass: "jglr abus ujrk tqal",
-        },
-      });
+try {
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
 
-      await transporter.sendMail({
-        from: "chauhanavinash36869@gmail.com",
-        to: email,
-        subject: "Your OTP Code",
-        text: `Your OTP is ${otp}`,
-      });
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: "Your OTP Code",
+    text: `Your OTP is ${otp}`,
+  });
 
-      console.log("OTP Email sent to:", email);
-    } catch (error) {
-      console.error("Nodemailer error:", error.message);
-    }
+  console.log("✅ OTP Email sent to:", email);
+} catch (error) {
+  console.error("❌ Nodemailer error:", error.message);
+}
+
 
     // Save new user in MongoDB
     const newUser = new User({
