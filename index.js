@@ -57,25 +57,30 @@ app.post("/signup", async (req, res) => {
     const hashPassword = await bcrypt.hash(password, 10);
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // ✅ Twilio client
-    const twilioClient = twilio(
-      process.env.TWILIO_ACCOUNT_SID,
-      process.env.TWILIO_AUTH_TOKEN
-    );
+    // Twilio client
 
-    // Send OTP via SMS
-    try {
-      const message = await twilioClient.messages.create({
-        body: `Your OTP is ${otp}`,
-        from: process.env.TWILIO_FROM_NUMBER,
-        to: phoneNumber,
-      });
-      console.log("✅ OTP SMS sent:", message.sid);
-    } catch (error) {
-      console.error("❌ Twilio error:", error.message);
-    }
+
+    // const twilioClient = twilio(
+    //   process.env.TWILIO_ACCOUNT_SID,
+    //   process.env.TWILIO_AUTH_TOKEN
+    // );
+
+    // // Send OTP via SMS
+    // try {
+    //   const message = await twilioClient.messages.create({
+    //     body: `Your OTP is ${otp}`,
+    //     from: process.env.TWILIO_FROM_NUMBER,
+    //     to: phoneNumber,
+    //   });
+    //   console.log("OTP SMS sent:", message.sid);
+    // } catch (error) {
+    //   console.error("Twilio error:", error.message);
+    // }
+
+
 
     // ✅ Send OTP via Email (Nodemailer)
+    
     try {
       const transporter = nodemailer.createTransport({
         service: "gmail",
@@ -92,9 +97,9 @@ app.post("/signup", async (req, res) => {
         text: `Your OTP is ${otp}`,
       });
 
-      console.log("✅ OTP Email sent to:", email);
+      console.log("OTP Email sent to:", email);
     } catch (error) {
-      console.error("❌ Nodemailer error:", error.message);
+      console.error("Nodemailer error:", error.message);
     }
 
     // Save new user in MongoDB
@@ -110,7 +115,7 @@ app.post("/signup", async (req, res) => {
 
     res.send({ message: "Registration successful, OTP sent" });
   } catch (err) {
-    console.error("❌ Registration failed:", err.message);
+    console.error("Registration failed:", err.message);
     res
       .status(500)
       .send({ message: "Registration failed", error: err.message });
