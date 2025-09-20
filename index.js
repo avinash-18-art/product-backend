@@ -78,10 +78,10 @@ app.post("/signup", async (req, res) => {
     // Twilio client
 
 
-    const twilioClient = twilio(
-      process.env.TWILIO_ACCOUNT_SID,
-      process.env.TWILIO_AUTH_TOKEN
-    );
+ const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
 
     // Send OTP via SMS
     try {
