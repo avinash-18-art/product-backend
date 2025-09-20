@@ -22,11 +22,29 @@ const PORT = process.env.PORT || 5000;
 const secretKey = "apjabdulkalam@545";
 
 // Middleware
-app.use(cors({
-  origin:  "https://meesho-frontend-no7l.vercel.app", // frontend URL
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true
-}));
+const allowedOrigins = [
+  "https://meesho-frontend-no7l.vercel.app", // deployed frontend
+  "http://localhost:3001",                  // local frontend
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // allow requests with no origin (like mobile apps, curl, postman)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
+
+
+
+
 app.use(express.json());
 
 // File upload
