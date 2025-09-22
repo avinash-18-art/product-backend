@@ -10,189 +10,149 @@ const bcrypt = require("bcrypt");
 const nodemailer = require("nodemailer");
 const twilio = require("twilio");
 const jwt = require("jsonwebtoken");
-const dotenv = require("dotenv");
 const mongoose = require("mongoose");
-
-// Load .env file
 require("dotenv").config();
-dotenv.config(); 
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const secretKey = "apjabdulkalam@545";
+const JWT_SECRET = "apjabdulkalam@545";
 
-// Middleware
-const allowedOrigins = [
-  "https://meesho-frontend-no7l.vercel.app", // deployed frontend
-  "http://localhost:3001",                  // local frontend
-];
-
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // allow requests with no origin (like mobile apps, curl, postman)
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true,
-  })
-);
-
-
-
-
-app.use(express.json());
-
-// File upload
-const upload = multer({ dest: "uploads/" });
-
-mongoose.connect("mongodb://localhost:27017/formate", {
+// ===== Mongoose Connection =====
+mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
-.then(() => console.log("✅ MongoDB Connected"))
-.catch(() => console.log("❌ MongoDB Disconnected"));
+  .then(() => console.log("✅ MongoDB Atlas Connected"))
+  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
+// ===== Models =====
 const User = require("./models/User");
 
-// signup
+// ===== Middleware =====
+app.use(cors({
+  origin:"https://meesho-frontend-no7l.vercel.app",
+  methods:['GET','POST','PUT','DELETE'],
+  credentials:true, // If you need to send cookies or authentication headers with the request
+})
+);
 
+app.use(express.json());
+const upload = multer({ dest: "uploads/" });
+
+// ===== Signup =====
 app.post("/signup", async (req, res) => {
   try {
     const { fullname, email, phoneNumber, password } = req.body;
 
-    // Check if user already exists
-    const existUser = await User.findOne({ email });
-    if (existUser) {
-      return res.status(400).send({ message: "User already registered" });
-    }
+    if (!fullname || !email || !phoneNumber || !password)
+      return res.status(400).send({ message: "All fields are required" });
 
-    // Hash password & generate OTP
-    const hashPassword = await bcrypt.hash(password, 10);
+    const existingUser = await User.findOne({ email });
+    if (existingUser) return res.status(400).send({ message: "User already registered" });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Twilio client
-
-
- const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
-
-    // Send OTP via SMS
+    // Twilio SMS
+    const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
     try {
-      const message = await twilioClient.messages.create({
+      await twilioClient.messages.create({
         body: `Your OTP is ${otp}`,
         from: process.env.TWILIO_FROM_NUMBER,
         to: phoneNumber,
       });
-      console.log("OTP SMS sent:", message.sid);
+      console.log("OTP SMS sent");
     } catch (error) {
       console.error("Twilio error:", error.message);
     }
 
+    // Nodemailer Email
+    try {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS,
+        },
+      });
 
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: "Your OTP Code",
+        text: `Your OTP is ${otp}`,
+      });
 
-    // ✅ Send OTP via Email (Nodemailer)
+      console.log("OTP Email sent");
+    } catch (error) {
+      console.error("Nodemailer error:", error.message);
+    }
 
-try {
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  });
-
-  await transporter.sendMail({
-    from: process.env.EMAIL_USER,
-    to: email,
-    subject: "Your OTP Code",
-    text: `Your OTP is ${otp}`,
-  });
-
-  console.log("✅ OTP Email sent to:", email);
-} catch (error) {
-  console.error("❌ Nodemailer error:", error.message);
-}
-
-
-    // Save new user in MongoDB
-    const newUser = new User({
-      fullname,
-      email,
-      phoneNumber,
-      otp,
-      password: hashPassword,
-    });
-
+    const newUser = new User({ fullname, email, phoneNumber, password: hashedPassword, otp });
     await newUser.save();
 
     res.send({ message: "Registration successful, OTP sent" });
+
   } catch (err) {
-    console.error("Registration failed:", err.message);
-    res
-      .status(500)
-      .send({ message: "Registration failed", error: err.message });
+    console.error("Signup error:", err.message);
+    res.status(500).send({ message: "Signup failed", error: err.message });
   }
 });
 
-
-
-app.post('/verify-otp', async (req, res) => {
+// ===== Verify OTP =====
+app.post("/verify-otp", async (req, res) => {
   const { email, otp } = req.body;
-
   try {
     const user = await User.findOne({ email });
-    if (!user) {
-      return res.json({ message: "User not found", success: false });
-    }
+    if (!user) return res.json({ message: "User not found", success: false });
 
     if (user.otp === otp) {
       return res.json({ message: "OTP verified successfully", success: true });
-    } else {
-      return res.json({ message: "Invalid OTP", success: false });
     }
+    return res.json({ message: "Invalid OTP", success: false });
+
   } catch (error) {
-    res.json({ message: "Internal server error", success: false });
+    res.status(500).json({ message: "Internal server error", success: false });
   }
 });
 
-app.post('/login',async (req,res)=>{
-    const{email,password}= req.body 
-    const user = await User.findOne({email})
-    if(!user){
-        return res.json({message:"the user not found"})
-    }
-    const isValidPassword= await bcrypt.compare(password,user.password)
-    if(!isValidPassword){
-        return res.send({message:"user is creditional"})
-    }
-    const token = jwt.sign({fullname:user.fullname,email:user.email,phoneNumber:user.phoneNumber},secretKey,{expiresIn:"1h"})
-    res.send({message:"login successful",token})
-})
+// ===== Login =====
+app.post("/login", async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-function verifyToken(req,res,next){
-    const authHeader = req.headers.authorization 
-    if(!authHeader||!authHeader.startsWith("Bearer "))
-        return res.json({message:"token required"})
-    const token = authHeader.split(' ')[1]
-    jwt.verify(token,secretKey,(error,decode)=>{
-        if(error){
-            res.send({message:"invalid token"})
-        }
-        req.user = decode 
-        next()
-    })
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) return res.status(401).json({ message: "Invalid credentials" });
+
+    const token = jwt.sign({ fullname: user.fullname, email: user.email, phoneNumber: user.phoneNumber }, JWT_SECRET, { expiresIn: "1h" });
+    res.send({ message: "Login successful", token });
+
+  } catch (err) {
+    res.status(500).json({ message: "Login failed", error: err.message });
+  }
+});
+
+// ===== Token Middleware =====
+function verifyToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer "))
+    return res.status(401).json({ message: "Token required" });
+
+  const token = authHeader.split(" ")[1];
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(401).json({ message: "Invalid token" });
+    req.user = decoded;
+    next();
+  });
 }
 
-app.get("/profile",verifyToken,(req,res)=>{
-    res.send({message:"welcome to our profile",user:req.user})
-})
+// ===== Profile Route =====
+app.get("/profile", verifyToken, (req, res) => {
+  res.send({ message: "Welcome to your profile", user: req.user });
+});
+
 
 
 let latestData = null;
