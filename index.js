@@ -54,7 +54,13 @@ app.post("/signup", async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
     // Twilio SMS
-    const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+ const twilio = require("twilio");
+
+// Create Twilio client
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
     try {
       await twilioClient.messages.create({
         body: `Your OTP is ${otp}`,
