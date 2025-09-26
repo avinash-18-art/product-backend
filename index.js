@@ -44,31 +44,61 @@ const upload = multer({ dest: "uploads/" });
 // ===== Signup =====
 app.post("/signup", async (req, res) => {
   try {
-    const { fullname, email, phoneNumber, password } = req.body;
+    const {
+      firstName,
+      lastName,
+      email,
+      mobileNumber,
+      gstNumber,
+      city,
+      country,
+      createPassword,
+      confirmPassword,
+    } = req.body;
 
-    if (!fullname || !email || !phoneNumber || !password)
+    // Validation
+    if (
+      !firstName ||
+      !lastName ||
+      !email ||
+      !mobileNumber ||
+      !gstNumber ||
+      !city ||
+      !country ||
+      !createPassword ||
+      !confirmPassword
+    ) {
       return res.status(400).send({ message: "All fields are required" });
+    }
+
+    if (createPassword !== confirmPassword) {
+      return res.status(400).send({ message: "Passwords do not match" });
+    }
 
     const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).send({ message: "User already registered" });
+    if (existingUser) {
+      return res.status(400).send({ message: "User already registered" });
+    }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Hash password
+    const hashedPassword = await bcrypt.hash(createPassword, 10);
+
+    // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
     // Twilio SMS
- const twilio = require("twilio");
-
-// Create Twilio client
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
     try {
+      const twilioClient = twilio(
+        process.env.TWILIO_ACCOUNT_SID,
+        process.env.TWILIO_AUTH_TOKEN
+      );
+
       await twilioClient.messages.create({
         body: `Your OTP is ${otp}`,
         from: process.env.TWILIO_FROM_NUMBER,
-        to: phoneNumber,
+        to: mobileNumber,
       });
+
       console.log("OTP SMS sent");
     } catch (error) {
       console.error("Twilio error:", error.message);
@@ -96,11 +126,23 @@ const twilioClient = twilio(
       console.error("Nodemailer error:", error.message);
     }
 
-    const newUser = new User({ fullname, email, phoneNumber, password: hashedPassword, otp });
+    // Save user
+    const newUser = new User({
+      firstName,
+      lastName,
+      email,
+      mobileNumber,
+      gstNumber,
+      city,
+      country,
+      createPassword: hashedPassword, // store hashed
+      confirmPassword: hashedPassword, // also hashed for consistency
+      otp,
+    });
+
     await newUser.save();
 
     res.send({ message: "Registration successful, OTP sent" });
-
   } catch (err) {
     console.error("Signup error:", err.message);
     res.status(500).send({ message: "Signup failed", error: err.message });
