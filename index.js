@@ -52,6 +52,7 @@ function generateOtp() {
   });
 }
 
+
 // ===== Signup =====
 app.post("/signup", async (req, res) => {
   try {
@@ -160,6 +161,7 @@ app.post("/signup", async (req, res) => {
   }
 });
 
+
 // ===== Forgot Password Route =====
 app.post("/forgot-password", async (req, res) => {
   try {
@@ -206,6 +208,7 @@ app.post("/forgot-password", async (req, res) => {
   }
 });
 
+
 // ===== Verify OTP =====
 app.post("/verify-otp", async (req, res) => {
   const { email, otp } = req.body;
@@ -240,6 +243,7 @@ app.post("/login", async (req, res) => {
     res.status(500).json({ message: "Login failed", error: err.message });
   }
 });
+
 
 
 /* ================= RESEND OTP (Forgot Password) ================= */
@@ -315,8 +319,6 @@ app.post("/reset-password", async (req, res) => {
     res.status(500).json({ message: "Server error", success: false });
   }
 });
-
-
 
 // ===== Token Middleware =====
 function verifyToken(req, res, next) {
@@ -781,4 +783,3 @@ app.get("/download-pdf", (req, res) => {
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
-
