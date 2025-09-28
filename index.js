@@ -188,10 +188,10 @@ app.post("/forgot-password", async (req, res) => {
         from: process.env.TWILIO_FROM_NUMBER,
         to: user.mobileNumber, // must be in international format (+91... for India)
       });
-      console.log("✅ Password reset OTP sent via SMS");
+      console.log("✅ Password resend OTP sent via SMS");
     }
 
-    res.json({ message: "Password reset OTP sent", success: true });
+    res.json({ message: "Password resend OTP ", success: true });
   } catch (error) {
     console.error("❌ Forgot password error:", error);
     res.status(500).json({
