@@ -184,6 +184,125 @@ app.post("/login", async (req, res) => {
   }
 });
 
+app.post("/forgot-password", async (req, res) => {
+  try {
+    const { value } = req.body; // email or mobile
+    if (!value) {
+      return res.status(400).json({ message: "Email or Mobile required" });
+    }
+
+    const user = await User.findOne({
+      $or: [{ email: value }, { mobileNumber: value }],
+    });
+    if (!user) return res.json({ message: "User not found", success: false });
+
+    const otp = generateOtp();
+    user.resetOtp = otp;
+    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+    await user.save();
+
+    if (value.includes("@")) {
+      // Email
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: user.email,
+        subject: "Password Reset OTP",
+        text: `Your OTP is ${otp}`,
+      });
+      console.log("Password reset OTP sent via Email");
+    } else {
+      // SMS
+      await twilioClient.messages.create({
+        body: `Your password reset OTP is ${otp}`,
+        from: process.env.TWILIO_FROM_NUMBER,
+        to: user.mobileNumber,
+      });
+      console.log("Password reset OTP sent via SMS");
+    }
+
+    res.json({ message: "Password reset OTP sent", success: true });
+  } catch (error) {
+    console.error("Forgot password error:", error.message);
+    res.status(500).json({ message: "Server error", success: false });
+  }
+});
+
+/* ================= RESEND OTP (Forgot Password) ================= */
+app.post("/resend-otp", async (req, res) => {
+  try {
+    const { value } = req.body;
+    const user = await User.findOne({
+      $or: [{ email: value }, { mobileNumber: value }],
+    });
+    if (!user) return res.json({ message: "User not found", success: false });
+
+    const otp = generateOtp();
+    user.resetOtp = otp;
+    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+    await user.save();
+
+    if (value.includes("@")) {
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: user.email,
+        subject: "Resent OTP",
+        text: `Your OTP is ${otp}`,
+      });
+      console.log("Resent OTP via Email");
+    } else {
+      await twilioClient.messages.create({
+        body: `Your OTP is ${otp}`,
+        from: process.env.TWILIO_FROM_NUMBER,
+        to: user.mobileNumber,
+      });
+      console.log("Resent OTP via SMS");
+    }
+
+    res.json({ message: "OTP resent successfully", success: true });
+  } catch (error) {
+    console.error("Resend OTP error:", error.message);
+    res.status(500).json({ message: "Server error", success: false });
+  }
+});
+
+/* ================= RESET PASSWORD ================= */
+app.post("/reset-password", async (req, res) => {
+  try {
+    const { value, otp, newPassword } = req.body;
+    if (!value || !otp) {
+      return res.status(400).json({ message: "Value and OTP are required", success: false });
+    }
+
+    const user = await User.findOne({
+      $or: [{ email: value }, { mobileNumber: value }],
+    });
+    if (!user) return res.json({ message: "User not found", success: false });
+
+    if (!user.resetOtp || user.resetOtp !== otp || Date.now() > user.resetOtpExpiry) {
+      return res.json({ message: "Invalid or expired OTP", success: false });
+    }
+
+    // Step 1: Only OTP verification
+    if (!newPassword) {
+      return res.json({ message: "OTP verified", success: true });
+    }
+
+    // Step 2: Update password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword;
+    user.resetOtp = null;
+    user.resetOtpExpiry = null;
+    await user.save();
+
+    res.json({ message: "Password reset successful", success: true });
+  } catch (error) {
+    console.error("Reset password error:", error.message);
+    res.status(500).json({ message: "Server error", success: false });
+  }
+});
+
+
+
 // ===== Token Middleware =====
 function verifyToken(req, res, next) {
   const authHeader = req.headers.authorization;
