@@ -42,18 +42,26 @@ const User = require("./models/User");
 app.use(express.json());
 const upload = multer({ dest: "uploads/" });
 
-//===otpgenerator===//
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
+
+// ===== Nodemailer Transporter =====
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+// ===== OTP Utility =====
 function generateOtp() {
-  return otpGenerator.generate(6, {
-    digits: true,
-    upperCaseAlphabets: false,
-    specialChars: false,
-    lowerCaseAlphabets: false,
-  });
+  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
 }
 
 
-// ===== Signup =====
 app.post("/signup", async (req, res) => {
   try {
     const {
@@ -69,73 +77,48 @@ app.post("/signup", async (req, res) => {
     } = req.body;
 
     // Validation
-    if (
-      !firstName ||
-      !lastName ||
-      !email ||
-      !mobileNumber ||
-      !gstNumber ||
-      !city ||
-      !country ||
-      !createPassword ||
-      !confirmPassword
-    ) {
-      return res.status(400).send({ message: "All fields are required" });
+    if (!firstName || !lastName || !email || !mobileNumber || !gstNumber || !city || !country || !createPassword || !confirmPassword) {
+      return res.status(400).json({ message: "All fields are required" });
     }
 
     if (createPassword !== confirmPassword) {
-      return res.status(400).send({ message: "Passwords do not match" });
+      return res.status(400).json({ message: "Passwords do not match" });
     }
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).send({ message: "User already registered" });
+      return res.status(400).json({ message: "User already registered" });
     }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(createPassword, 10);
 
     // Generate OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateOtp();
 
     // Twilio SMS
     try {
-      const twilioClient = twilio(
-        process.env.TWILIO_ACCOUNT_SID,
-        process.env.TWILIO_AUTH_TOKEN
-      );
-
       await twilioClient.messages.create({
         body: `Your OTP is ${otp}`,
         from: process.env.TWILIO_FROM_NUMBER,
-        to: mobileNumber,
+        to: mobileNumber.startsWith("+") ? mobileNumber : `+91${mobileNumber}`, // add country code if needed
       });
-
       console.log("OTP SMS sent");
-    } catch (error) {
-      console.error("Twilio error:", error.message);
+    } catch (twilioError) {
+      console.error("Twilio error:", twilioError.message);
     }
 
     // Nodemailer Email
     try {
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS,
-        },
-      });
-
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
         to: email,
         subject: "Your OTP Code",
         text: `Your OTP is ${otp}`,
       });
-
       console.log("OTP Email sent");
-    } catch (error) {
-      console.error("Nodemailer error:", error.message);
+    } catch (emailError) {
+      console.error("Nodemailer error:", emailError.message);
     }
 
     // Save user
@@ -147,17 +130,17 @@ app.post("/signup", async (req, res) => {
       gstNumber,
       city,
       country,
-      createPassword: hashedPassword, // store hashed
-      confirmPassword: hashedPassword, // also hashed for consistency
+      createPassword: hashedPassword,
+      confirmPassword:hashedPassword, // store hashed password only
       otp,
     });
 
     await newUser.save();
 
-    res.send({ message: "Registration successful, OTP sent" });
+    res.status(201).json({ message: "Registration successful, OTP sent" });
   } catch (err) {
     console.error("Signup error:", err.message);
-    res.status(500).send({ message: "Signup failed", error: err.message });
+    res.status(500).json({ message: "Signup failed", error: err.message });
   }
 });
 
@@ -165,22 +148,30 @@ app.post("/signup", async (req, res) => {
 // ===== Forgot Password Route =====
 app.post("/forgot-password", async (req, res) => {
   try {
-    const { value } = req.body;
-    if (!value) {
+    const { email, mobileNumber } = req.body;
+
+    // Validation
+    if (!email && !mobileNumber) {
       return res.status(400).json({ message: "Email or Mobile required" });
     }
 
+    // Find user by email OR mobile number
     const user = await User.findOne({
-      $or: [{ email: value }, { mobileNumber: value }],
+      $or: [{ email }, { mobileNumber }],
     });
-    if (!user) return res.json({ message: "User not found", success: false });
 
+    if (!user) {
+      return res.status(404).json({ message: "User not found", success: false });
+    }
+
+    // Generate OTP
     const otp = generateOtp();
     user.resetOtp = otp;
-    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
     await user.save();
 
-    if (value.includes("@")) {
+    // Send OTP via Email
+    if (email) {
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
         to: user.email,
@@ -188,11 +179,14 @@ app.post("/forgot-password", async (req, res) => {
         text: `Your OTP is ${otp}`,
       });
       console.log("✅ Password reset OTP sent via Email");
-    } else {
+    }
+
+    // Send OTP via SMS
+    if (mobileNumber) {
       await twilioClient.messages.create({
         body: `Your password reset OTP is ${otp}`,
         from: process.env.TWILIO_FROM_NUMBER,
-        to: user.mobileNumber,
+        to: user.mobileNumber, // must be in international format (+91... for India)
       });
       console.log("✅ Password reset OTP sent via SMS");
     }
@@ -207,7 +201,6 @@ app.post("/forgot-password", async (req, res) => {
     });
   }
 });
-
 
 // ===== Verify OTP =====
 app.post("/verify-otp", async (req, res) => {
