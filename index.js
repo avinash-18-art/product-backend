@@ -42,6 +42,31 @@ app.use(express.json());
 const upload = multer({ dest: "uploads/" });
 
 // ===== Signup =====
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
+
+// ===== Nodemailer Transporter (GLOBAL) =====
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+// ===== OTP Utility =====
+function generateOtp() {
+  return otpGenerator.generate(6, {
+    digits: true,
+    upperCaseAlphabets: false,
+    specialChars: false,
+    lowerCaseAlphabets: false,
+  });
+}
+
+// ===== Signup Route =====
 app.post("/signup", async (req, res) => {
   try {
     const {
@@ -56,7 +81,6 @@ app.post("/signup", async (req, res) => {
       confirmPassword,
     } = req.body;
 
-    // Validation
     if (
       !firstName ||
       !lastName ||
@@ -80,53 +104,24 @@ app.post("/signup", async (req, res) => {
       return res.status(400).send({ message: "User already registered" });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(createPassword, 10);
+    const otp = generateOtp();
 
-    // Generate OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Send OTP via SMS
+    await twilioClient.messages.create({
+      body: `Your OTP is ${otp}`,
+      from: process.env.TWILIO_FROM_NUMBER,
+      to: mobileNumber,
+    });
 
-    // Twilio SMS
-    try {
-      const twilioClient = twilio(
-        process.env.TWILIO_ACCOUNT_SID,
-        process.env.TWILIO_AUTH_TOKEN
-      );
+    // Send OTP via Email
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "Your OTP Code",
+      text: `Your OTP is ${otp}`,
+    });
 
-      await twilioClient.messages.create({
-        body: `Your OTP is ${otp}`,
-        from: process.env.TWILIO_FROM_NUMBER,
-        to: mobileNumber,
-      });
-
-      console.log("OTP SMS sent");
-    } catch (error) {
-      console.error("Twilio error:", error.message);
-    }
-
-    // Nodemailer Email
-    try {
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS,
-        },
-      });
-
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: "Your OTP Code",
-        text: `Your OTP is ${otp}`,
-      });
-
-      console.log("OTP Email sent");
-    } catch (error) {
-      console.error("Nodemailer error:", error.message);
-    }
-
-    // Save user
     const newUser = new User({
       firstName,
       lastName,
@@ -135,8 +130,7 @@ app.post("/signup", async (req, res) => {
       gstNumber,
       city,
       country,
-      createPassword: hashedPassword, // store hashed
-      confirmPassword: hashedPassword, // also hashed for consistency
+      password: hashedPassword,
       otp,
     });
 
@@ -144,8 +138,54 @@ app.post("/signup", async (req, res) => {
 
     res.send({ message: "Registration successful, OTP sent" });
   } catch (err) {
-    console.error("Signup error:", err.message);
+    console.error("Signup error:", err);
     res.status(500).send({ message: "Signup failed", error: err.message });
+  }
+});
+
+// ===== Forgot Password Route =====
+app.post("/forgot-password", async (req, res) => {
+  try {
+    const { value } = req.body;
+    if (!value) {
+      return res.status(400).json({ message: "Email or Mobile required" });
+    }
+
+    const user = await User.findOne({
+      $or: [{ email: value }, { mobileNumber: value }],
+    });
+    if (!user) return res.json({ message: "User not found", success: false });
+
+    const otp = generateOtp();
+    user.resetOtp = otp;
+    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+    await user.save();
+
+    if (value.includes("@")) {
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: user.email,
+        subject: "Password Reset OTP",
+        text: `Your OTP is ${otp}`,
+      });
+      console.log("✅ Password reset OTP sent via Email");
+    } else {
+      await twilioClient.messages.create({
+        body: `Your password reset OTP is ${otp}`,
+        from: process.env.TWILIO_FROM_NUMBER,
+        to: user.mobileNumber,
+      });
+      console.log("✅ Password reset OTP sent via SMS");
+    }
+
+    res.json({ message: "Password reset OTP sent", success: true });
+  } catch (error) {
+    console.error("❌ Forgot password error:", error);
+    res.status(500).json({
+      message: "Server error",
+      success: false,
+      error: error.message,
+    });
   }
 });
 
@@ -184,48 +224,6 @@ app.post("/login", async (req, res) => {
   }
 });
 
-app.post("/forgot-password", async (req, res) => {
-  try {
-    const { value } = req.body; // email or mobile
-    if (!value) {
-      return res.status(400).json({ message: "Email or Mobile required" });
-    }
-
-    const user = await User.findOne({
-      $or: [{ email: value }, { mobileNumber: value }],
-    });
-    if (!user) return res.json({ message: "User not found", success: false });
-
-    const otp = generateOtp();
-    user.resetOtp = otp;
-    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
-    await user.save();
-
-    if (value.includes("@")) {
-      // Email
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: user.email,
-        subject: "Password Reset OTP",
-        text: `Your OTP is ${otp}`,
-      });
-      console.log("Password reset OTP sent via Email");
-    } else {
-      // SMS
-      await twilioClient.messages.create({
-        body: `Your password reset OTP is ${otp}`,
-        from: process.env.TWILIO_FROM_NUMBER,
-        to: user.mobileNumber,
-      });
-      console.log("Password reset OTP sent via SMS");
-    }
-
-    res.json({ message: "Password reset OTP sent", success: true });
-  } catch (error) {
-    console.error("Forgot password error:", error.message);
-    res.status(500).json({ message: "Server error", success: false });
-  }
-});
 
 /* ================= RESEND OTP (Forgot Password) ================= */
 app.post("/resend-otp", async (req, res) => {
