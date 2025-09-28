@@ -11,6 +11,7 @@ const nodemailer = require("nodemailer");
 const twilio = require("twilio");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
+const otpGenerator = require("otp-generator");
 require("dotenv").config();
 
 const app = express();
@@ -41,22 +42,7 @@ const User = require("./models/User");
 app.use(express.json());
 const upload = multer({ dest: "uploads/" });
 
-// ===== Signup =====
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
-
-// ===== Nodemailer Transporter (GLOBAL) =====
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
-
-// ===== OTP Utility =====
+//===otpgenerator===//
 function generateOtp() {
   return otpGenerator.generate(6, {
     digits: true,
@@ -66,7 +52,7 @@ function generateOtp() {
   });
 }
 
-// ===== Signup Route =====
+// ===== Signup =====
 app.post("/signup", async (req, res) => {
   try {
     const {
@@ -81,6 +67,7 @@ app.post("/signup", async (req, res) => {
       confirmPassword,
     } = req.body;
 
+    // Validation
     if (
       !firstName ||
       !lastName ||
@@ -104,24 +91,53 @@ app.post("/signup", async (req, res) => {
       return res.status(400).send({ message: "User already registered" });
     }
 
+    // Hash password
     const hashedPassword = await bcrypt.hash(createPassword, 10);
-    const otp = generateOtp();
 
-    // Send OTP via SMS
-    await twilioClient.messages.create({
-      body: `Your OTP is ${otp}`,
-      from: process.env.TWILIO_FROM_NUMBER,
-      to: mobileNumber,
-    });
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Send OTP via Email
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: "Your OTP Code",
-      text: `Your OTP is ${otp}`,
-    });
+    // Twilio SMS
+    try {
+      const twilioClient = twilio(
+        process.env.TWILIO_ACCOUNT_SID,
+        process.env.TWILIO_AUTH_TOKEN
+      );
 
+      await twilioClient.messages.create({
+        body: `Your OTP is ${otp}`,
+        from: process.env.TWILIO_FROM_NUMBER,
+        to: mobileNumber,
+      });
+
+      console.log("OTP SMS sent");
+    } catch (error) {
+      console.error("Twilio error:", error.message);
+    }
+
+    // Nodemailer Email
+    try {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS,
+        },
+      });
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: "Your OTP Code",
+        text: `Your OTP is ${otp}`,
+      });
+
+      console.log("OTP Email sent");
+    } catch (error) {
+      console.error("Nodemailer error:", error.message);
+    }
+
+    // Save user
     const newUser = new User({
       firstName,
       lastName,
@@ -130,7 +146,8 @@ app.post("/signup", async (req, res) => {
       gstNumber,
       city,
       country,
-      password: hashedPassword,
+      createPassword: hashedPassword, // store hashed
+      confirmPassword: hashedPassword, // also hashed for consistency
       otp,
     });
 
@@ -138,7 +155,7 @@ app.post("/signup", async (req, res) => {
 
     res.send({ message: "Registration successful, OTP sent" });
   } catch (err) {
-    console.error("Signup error:", err);
+    console.error("Signup error:", err.message);
     res.status(500).send({ message: "Signup failed", error: err.message });
   }
 });
