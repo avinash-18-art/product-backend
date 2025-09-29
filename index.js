@@ -322,45 +322,48 @@ app.post("/reset-password", async (req, res) => {
   try {
     const { email, mobileNumber, otp, newPassword, confirmPassword } = req.body;
 
+    // Validate input
     if (!email && !mobileNumber) {
-      return res.status(400).json({ message: "Email or Mobile required", success: false });
+      return res.status(400).json({ success: false, message: "Email or Mobile required" });
     }
-
     if (!newPassword || !confirmPassword || newPassword !== confirmPassword) {
-      return res.status(400).json({ message: "Passwords do not match", success: false });
+      return res.status(400).json({ success: false, message: "Passwords do not match" });
     }
 
+    // Build query
     const query = [];
     if (email) query.push({ email: email.toLowerCase().trim() });
     if (mobileNumber) query.push({ mobileNumber: mobileNumber.trim() });
 
-    if (!query.length) {
-      return res.status(400).json({ message: "Invalid request", success: false });
-    }
-
     const user = await User.findOne({ $or: query });
-    if (!user) return res.status(404).json({ message: "User not found", success: false });
-
-    if (String(user.resetOtp) !== String(otp) || Date.now() > new Date(user.resetOtpExpiry).getTime()) {
-      return res.status(400).json({ message: "Invalid or expired OTP", success: false });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // Hash the password before saving
-    const bcrypt = require("bcrypt");
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    // Verify OTP
+    if (
+      String(user.resetOtp) !== String(otp) ||
+      Date.now() > new Date(user.resetOtpExpiry).getTime()
+    ) {
+      return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
+    }
 
-    user.createPassword = hashedPassword;
-    user.confirmPassword = hashedPassword;
+    // Hash password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword; // ✅ single field only
     user.resetOtp = null;
     user.resetOtpExpiry = null;
 
     await user.save();
 
-    res.json({ message: "Password reset successfully", success: true });
-
+    return res.json({ success: true, message: "Password reset successfully" });
   } catch (error) {
-    console.error(error); // Check console for exact error
-    res.status(500).json({ message: "Server error", success: false, error: error.message });
+    console.error("Reset Password Error:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
   }
 });
 
