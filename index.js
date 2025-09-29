@@ -145,32 +145,52 @@ app.post("/signup", async (req, res) => {
 });
 
 
+
 // ===== Forgot Password Route =====
 app.post("/forgot-password", async (req, res) => {
   try {
-    const { email, mobileNumber } = req.body;
+    let { email, mobileNumber } = req.body;
 
-    // Validation
     if (!email && !mobileNumber) {
-      return res.status(400).json({ message: "Email or Mobile required" });
+      return res
+        .status(400)
+        .json({ message: "Email or Mobile required", success: false });
     }
 
-    // Find user by email OR mobile number
-    const user = await User.findOne({
-      $or: [{ email }, { mobileNumber }],
-    });
+    const query = [];
+
+    if (email) {
+      query.push({ email: email.toLowerCase().trim() });
+    }
+
+    if (mobileNumber) {
+      // Normalize mobile number to include +91 if missing
+      if (!mobileNumber.startsWith("+")) {
+        mobileNumber = "+91" + mobileNumber.replace(/^0/, "");
+      }
+      query.push({ mobileNumber });
+    }
+
+    console.log("MongoDB query:", { $or: query });
+
+    const user = await User.findOne({ $or: query });
+
+    console.log("Found user:", user);
 
     if (!user) {
-      return res.status(404).json({ message: "User not found", success: false });
+      return res
+        .status(404)
+        .json({ message: "User not found", success: false });
     }
 
-    // Generate OTP
-    const otp = generateOtp();
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
     user.resetOtp = otp;
     user.resetOtpExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
     await user.save();
 
-    // Send OTP via Email
+    // Send OTP via Email if email exists
     if (email) {
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
@@ -178,46 +198,66 @@ app.post("/forgot-password", async (req, res) => {
         subject: "Password Reset OTP",
         text: `Your OTP is ${otp}`,
       });
-      console.log("✅ Password reset OTP sent via Email");
+      console.log("OTP sent via email:", otp);
     }
 
-    // Send OTP via SMS
+    // Send OTP via SMS if mobile exists
     if (mobileNumber) {
       await twilioClient.messages.create({
         body: `Your password reset OTP is ${otp}`,
         from: process.env.TWILIO_FROM_NUMBER,
-        to: user.mobileNumber, // must be in international format (+91... for India)
+        to: user.mobileNumber,
       });
-      console.log("✅ Password resend OTP sent via SMS");
+      console.log("OTP sent via SMS:", otp);
     }
 
-    res.json({ message: "Password resend OTP ", success: true });
+    res.json({ message: "OTP sent successfully", success: true });
   } catch (error) {
-    console.error("❌ Forgot password error:", error);
-    res.status(500).json({
-      message: "Server error",
-      success: false,
-      error: error.message,
-    });
+    console.error("Forgot password error:", error);
+    res
+      .status(500)
+      .json({ message: "Server error", success: false, error: error.message });
   }
 });
+
+
+
+
 
 // ===== Verify OTP =====
 app.post("/verify-otp", async (req, res) => {
-  const { email, otp } = req.body;
   try {
-    const user = await User.findOne({ email });
-    if (!user) return res.json({ message: "User not found", success: false });
+    const { email, mobileNumber, otp } = req.body;
 
-    if (user.otp === otp) {
-      return res.json({ message: "OTP verified successfully", success: true });
+    if (!email && !mobileNumber) {
+      return res.status(400).json({ message: "Email or Mobile required", success: false });
     }
-    return res.json({ message: "Invalid OTP", success: false });
 
+    const query = [];
+    if (email) query.push({ email: email.toLowerCase().trim() });
+    if (mobileNumber) query.push({ mobileNumber: mobileNumber.trim() });
+
+    if (!query.length) {
+      return res.status(400).json({ message: "Invalid request", success: false });
+    }
+
+    const user = await User.findOne({ $or: query });
+
+    if (!user) return res.status(404).json({ message: "User not found", success: false });
+
+    // Ensure OTP types match
+    if (String(user.resetOtp) !== String(otp) || Date.now() > new Date(user.resetOtpExpiry).getTime()) {
+      return res.status(400).json({ message: "Invalid or expired OTP", success: false });
+    }
+
+    res.json({ message: "OTP verified successfully", success: true });
   } catch (error) {
-    res.status(500).json({ message: "Internal server error", success: false });
+    console.error(error); // Check this in your server console
+    res.status(500).json({ message: "Server error", success: false, error: error.message });
   }
 });
+
+
 
 // ===== Login =====
 app.post("/login", async (req, res) => {
@@ -280,36 +320,38 @@ app.post("/resend-otp", async (req, res) => {
 /* ================= RESET PASSWORD ================= */
 app.post("/reset-password", async (req, res) => {
   try {
-    const { value, otp, newPassword } = req.body;
-    if (!value || !otp) {
-      return res.status(400).json({ message: "Value and OTP are required", success: false });
+    const { email, mobileNumber, otp, newPassword, confirmPassword } = req.body;
+
+    if (!email && !mobileNumber) {
+      return res.status(400).json({ message: "Email or Mobile required", success: false });
     }
 
-    const user = await User.findOne({
-      $or: [{ email: value }, { mobileNumber: value }],
-    });
-    if (!user) return res.json({ message: "User not found", success: false });
-
-    if (!user.resetOtp || user.resetOtp !== otp || Date.now() > user.resetOtpExpiry) {
-      return res.json({ message: "Invalid or expired OTP", success: false });
+    if (!newPassword || !confirmPassword || newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match", success: false });
     }
 
-    // Step 1: Only OTP verification
-    if (!newPassword) {
-      return res.json({ message: "OTP verified", success: true });
+    const query = [];
+    if (email) query.push({ email });
+    if (mobileNumber) query.push({ mobileNumber });
+
+    const user = await User.findOne({ $or: query });
+
+    if (!user) return res.status(404).json({ message: "User not found", success: false });
+
+    if (user.resetOtp !== otp || Date.now() > user.resetOtpExpiry) {
+      return res.status(400).json({ message: "Invalid or expired OTP", success: false });
     }
 
-    // Step 2: Update password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    user.password = hashedPassword;
+    user.createPassword = newPassword; // or hash it with bcrypt
+    user.confirmPassword = confirmPassword;
     user.resetOtp = null;
     user.resetOtpExpiry = null;
     await user.save();
 
-    res.json({ message: "Password reset successful", success: true });
+    res.json({ message: "Password reset successfully", success: true });
   } catch (error) {
-    console.error("Reset password error:", error.message);
-    res.status(500).json({ message: "Server error", success: false });
+    console.error(error);
+    res.status(500).json({ message: "Server error", success: false, error: error.message });
   }
 });
 

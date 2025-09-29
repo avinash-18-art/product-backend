@@ -5,15 +5,15 @@ const UserSchema = new mongoose.Schema({
   lastName: { type: String, required: true, trim: true },
   email: { type: String, unique: true, required: true, lowercase: true, trim: true },
   mobileNumber: { type: String, required: true },
-  gstNumber: { type: String },
+  gstNumber: { type: String, required: false }, // optional if not mandatory
   city: { type: String, required: true },
   country: { type: String, required: true },
   createPassword: { type: String, required: true },
   confirmPassword: { type: String, required: true },
-
-  // ✅ fields for forgot password
-  resetOtp: { type: String },
-  resetOtpExpiry: { type: Date },
-}, { timestamps: true });
+  otp: { type: String },
+  email: { type: String, unique: true, required: true, lowercase: true, trim: true },
+  mobileNumber: { type: String, required: true }
+ // still keeping OTP if you need it for verification
+})
 
 module.exports = mongoose.model("User", UserSchema);
