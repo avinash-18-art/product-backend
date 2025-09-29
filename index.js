@@ -331,29 +331,40 @@ app.post("/reset-password", async (req, res) => {
     }
 
     const query = [];
-    if (email) query.push({ email });
-    if (mobileNumber) query.push({ mobileNumber });
+    if (email) query.push({ email: email.toLowerCase().trim() });
+    if (mobileNumber) query.push({ mobileNumber: mobileNumber.trim() });
+
+    if (!query.length) {
+      return res.status(400).json({ message: "Invalid request", success: false });
+    }
 
     const user = await User.findOne({ $or: query });
-
     if (!user) return res.status(404).json({ message: "User not found", success: false });
 
-    if (user.resetOtp !== otp || Date.now() > user.resetOtpExpiry) {
+    if (String(user.resetOtp) !== String(otp) || Date.now() > new Date(user.resetOtpExpiry).getTime()) {
       return res.status(400).json({ message: "Invalid or expired OTP", success: false });
     }
 
-    user.createPassword = newPassword; // or hash it with bcrypt
-    user.confirmPassword = confirmPassword;
+    // Hash the password before saving
+    const bcrypt = require("bcrypt");
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    user.createPassword = hashedPassword;
+    user.confirmPassword = hashedPassword;
     user.resetOtp = null;
     user.resetOtpExpiry = null;
+
     await user.save();
 
     res.json({ message: "Password reset successfully", success: true });
+
   } catch (error) {
-    console.error(error);
+    console.error(error); // Check console for exact error
     res.status(500).json({ message: "Server error", success: false, error: error.message });
   }
 });
+
+
 
 // ===== Token Middleware =====
 function verifyToken(req, res, next) {
