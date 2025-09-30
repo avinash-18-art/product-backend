@@ -223,19 +223,16 @@ app.post("/forgot-password", async (req, res) => {
 
 
 
-
 app.post("/verify-otp", async (req, res) => {
   try {
     const { otp } = req.body;
-    console.log("Entered OTP:", otp);
+    if (!otp) return res.status(400).json({ message: "OTP required", success: false });
 
-    const user = await User.findOne({ resetOtp: otp, resetOtpExpiry: { $gt: Date.now() } });
-    console.log("Found User:", user);
+    const user = await User.findOne({ resetOtp: otp.toString(), resetOtpExpiry: { $gt: Date.now() } });
 
-    if (!user) {
-      return res.status(400).json({ message: "Invalid or expired OTP", success: false });
-    }
+    if (!user) return res.status(400).json({ message: "Invalid or expired OTP", success: false });
 
+    // ✅ mark OTP verified
     user.isOtpVerified = true;
     await user.save();
 
@@ -244,6 +241,7 @@ app.post("/verify-otp", async (req, res) => {
     res.status(500).json({ message: error.message, success: false });
   }
 });
+
 
 
 
@@ -313,29 +311,26 @@ app.post("/reset-password", async (req, res) => {
     const { otp, newPassword, confirmPassword } = req.body;
 
     if (!otp) return res.status(400).json({ message: "OTP required", success: false });
-    if (!newPassword || !confirmPassword) {
-      return res.status(400).json({ message: "Password fields required", success: false });
-    }
-    if (newPassword !== confirmPassword) {
-      return res.status(400).json({ message: "Passwords do not match", success: false });
-    }
+    if (!newPassword || !confirmPassword) return res.status(400).json({ message: "Password fields required", success: false });
+    if (newPassword !== confirmPassword) return res.status(400).json({ message: "Passwords do not match", success: false });
 
-    const user = await User.findOne({ resetOtp: otp, resetOtpExpiry: { $gt: Date.now() } });
+    const user = await User.findOne({
+      resetOtp: otp.toString(),
+      resetOtpExpiry: { $gt: Date.now() },
+      isOtpVerified: true
+    });
 
-    if (!user) {
-      return res.status(400).json({ message: "Invalid or expired OTP", success: false });
-    }
+    if (!user) return res.status(400).json({ message: "OTP not verified or expired", success: false });
 
-    if (!user.isOtpVerified) {
-      return res.status(400).json({ message: "OTP not verified", success: false });
-    }
-
-    // Hash password before saving
+    // ✅ update password
     user.createPassword = newPassword;
     user.confirmPassword = confirmPassword;
+
+    // ✅ clear OTP & verification flag
     user.resetOtp = undefined;
     user.resetOtpExpiry = undefined;
-    user.isOtpVerified = false; // reset flag
+    user.isOtpVerified = false;
+
     await user.save();
 
     res.json({ message: "Password reset successful", success: true });
@@ -343,6 +338,7 @@ app.post("/reset-password", async (req, res) => {
     res.status(500).json({ message: error.message, success: false });
   }
 });
+
 
 
 
