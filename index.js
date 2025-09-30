@@ -224,38 +224,31 @@ app.post("/forgot-password", async (req, res) => {
 
 
 
-// ===== Verify OTP =====
 app.post("/verify-otp", async (req, res) => {
   try {
-    const { email, mobileNumber, otp } = req.body;
+    const { otp } = req.body;
 
-    if (!email && !mobileNumber) {
-      return res.status(400).json({ message: "Email or Mobile required", success: false });
+    if (!otp) {
+      return res.status(400).json({ message: "OTP required", success: false });
     }
 
-    const query = [];
-    if (email) query.push({ email: email.toLowerCase().trim() });
-    if (mobileNumber) query.push({ mobileNumber: mobileNumber.trim() });
+    const user = await User.findOne({ resetOtp: otp, resetOtpExpiry: { $gt: Date.now() } });
 
-    if (!query.length) {
-      return res.status(400).json({ message: "Invalid request", success: false });
-    }
-
-    const user = await User.findOne({ $or: query });
-
-    if (!user) return res.status(404).json({ message: "User not found", success: false });
-
-    // Ensure OTP types match
-    if (String(user.resetOtp) !== String(otp) || Date.now() > new Date(user.resetOtpExpiry).getTime()) {
+    if (!user) {
       return res.status(400).json({ message: "Invalid or expired OTP", success: false });
     }
 
-    res.json({ message: "OTP verified successfully", success: true });
+    // Mark as verified temporarily
+    user.isOtpVerified = true;
+    await user.save();
+
+    res.json({ message: "OTP verified", success: true });
   } catch (error) {
-    console.error(error); // Check this in your server console
-    res.status(500).json({ message: "Server error", success: false, error: error.message });
+    res.status(500).json({ message: error.message, success: false });
   }
 });
+
+
 
 
 
@@ -320,52 +313,40 @@ app.post("/resend-otp", async (req, res) => {
 /* ================= RESET PASSWORD ================= */
 app.post("/reset-password", async (req, res) => {
   try {
-    const { email, mobileNumber, otp, newPassword, confirmPassword } = req.body;
+    const { otp, newPassword, confirmPassword } = req.body;
 
-    // Validate input
-    if (!email && !mobileNumber) {
-      return res.status(400).json({ success: false, message: "Email or Mobile required" });
+    if (!otp) return res.status(400).json({ message: "OTP required", success: false });
+    if (!newPassword || !confirmPassword) {
+      return res.status(400).json({ message: "Password fields required", success: false });
     }
-    if (!newPassword || !confirmPassword || newPassword !== confirmPassword) {
-      return res.status(400).json({ success: false, message: "Passwords do not match" });
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match", success: false });
     }
 
-    // Build query
-    const query = [];
-    if (email) query.push({ email: email.toLowerCase().trim() });
-    if (mobileNumber) query.push({ mobileNumber: mobileNumber.trim() });
+    const user = await User.findOne({ resetOtp: otp, resetOtpExpiry: { $gt: Date.now() } });
 
-    const user = await User.findOne({ $or: query });
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res.status(400).json({ message: "Invalid or expired OTP", success: false });
     }
 
-    // Verify OTP
-    if (
-      String(user.resetOtp) !== String(otp) ||
-      Date.now() > new Date(user.resetOtpExpiry).getTime()
-    ) {
-      return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
+    if (!user.isOtpVerified) {
+      return res.status(400).json({ message: "OTP not verified", success: false });
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    user.password = hashedPassword; // ✅ single field only
-    user.resetOtp = null;
-    user.resetOtpExpiry = null;
-
+    // Hash password before saving
+    user.createPassword = newPassword;
+    user.confirmPassword = confirmPassword;
+    user.resetOtp = undefined;
+    user.resetOtpExpiry = undefined;
+    user.isOtpVerified = false; // reset flag
     await user.save();
 
-    return res.json({ success: true, message: "Password reset successfully" });
+    res.json({ message: "Password reset successful", success: true });
   } catch (error) {
-    console.error("Reset Password Error:", error.message);
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
+    res.status(500).json({ message: error.message, success: false });
   }
 });
+
 
 
 
