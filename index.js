@@ -227,18 +227,15 @@ app.post("/forgot-password", async (req, res) => {
 app.post("/verify-otp", async (req, res) => {
   try {
     const { otp } = req.body;
-
-    if (!otp) {
-      return res.status(400).json({ message: "OTP required", success: false });
-    }
+    console.log("Entered OTP:", otp);
 
     const user = await User.findOne({ resetOtp: otp, resetOtpExpiry: { $gt: Date.now() } });
+    console.log("Found User:", user);
 
     if (!user) {
       return res.status(400).json({ message: "Invalid or expired OTP", success: false });
     }
 
-    // Mark as verified temporarily
     user.isOtpVerified = true;
     await user.save();
 

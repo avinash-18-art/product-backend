@@ -12,7 +12,10 @@ const UserSchema = new mongoose.Schema({
   confirmPassword: { type: String, required: true },
   otp: { type: String },
   email: { type: String, unique: true, required: true, lowercase: true, trim: true },
-  mobileNumber: { type: String, required: true }
+  mobileNumber: { type: String, required: true },
+  resetOtp: { type: String },                  // OTP as string
+  resetOtpExpiry: { type: Date },              // Expiry time
+  isOtpVerified: { type: Boolean, default: false }
  // still keeping OTP if you need it for verification
 })
 
