@@ -188,6 +188,7 @@ app.post("/forgot-password", async (req, res) => {
 
     user.resetOtp = otp;
     user.resetOtpExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
+    user.isOtpVerified = false;
     await user.save();
 
     // Send OTP via Email if email exists
@@ -228,19 +229,23 @@ app.post("/verify-otp", async (req, res) => {
     const { otp } = req.body;
     if (!otp) return res.status(400).json({ message: "OTP required", success: false });
 
-    const user = await User.findOne({ resetOtp: otp.toString(), resetOtpExpiry: { $gt: Date.now() } });
+    const user = await User.findOne({
+      resetOtp: otp.toString(),
+      resetOtpExpiry: { $gt: Date.now() }
+    });
 
     if (!user) return res.status(400).json({ message: "Invalid or expired OTP", success: false });
 
-    // ✅ mark OTP verified
-    user.isOtpVerified = true;
+    user.isOtpVerified = true; // ✅ mark OTP verified
     await user.save();
 
+    console.log("User after OTP verification:", user); // DEBUG
     res.json({ message: "OTP verified", success: true });
-  } catch (error) {
-    res.status(500).json({ message: error.message, success: false });
+  } catch (err) {
+    res.status(500).json({ message: err.message, success: false });
   }
 });
+
 
 
 
@@ -309,9 +314,8 @@ app.post("/resend-otp", async (req, res) => {
 app.post("/reset-password", async (req, res) => {
   try {
     const { otp, newPassword, confirmPassword } = req.body;
-
     if (!otp) return res.status(400).json({ message: "OTP required", success: false });
-    if (!newPassword || !confirmPassword) return res.status(400).json({ message: "Password fields required", success: false });
+    if (!newPassword || !confirmPassword) return res.status(400).json({ message: "Passwords required", success: false });
     if (newPassword !== confirmPassword) return res.status(400).json({ message: "Passwords do not match", success: false });
 
     const user = await User.findOne({
@@ -322,20 +326,18 @@ app.post("/reset-password", async (req, res) => {
 
     if (!user) return res.status(400).json({ message: "OTP not verified or expired", success: false });
 
-    // ✅ update password
     user.createPassword = newPassword;
     user.confirmPassword = confirmPassword;
 
-    // ✅ clear OTP & verification flag
+    // ✅ clear OTP and verification flag
     user.resetOtp = undefined;
     user.resetOtpExpiry = undefined;
     user.isOtpVerified = false;
-
     await user.save();
 
     res.json({ message: "Password reset successful", success: true });
-  } catch (error) {
-    res.status(500).json({ message: error.message, success: false });
+  } catch (err) {
+    res.status(500).json({ message: err.message, success: false });
   }
 });
 
