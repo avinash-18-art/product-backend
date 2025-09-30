@@ -237,17 +237,21 @@ app.post("/verify-otp", async (req, res) => {
     console.log("[DEBUG] Entered OTP:", otp);
     console.log("[DEBUG] User found:", user);
 
-    if (!user) return res.status(400).json({ message: "Invalid or expired OTP", success: false });
+    if (!user)
+      return res.status(400).json({ message: "Invalid or expired OTP", success: false });
 
     user.isOtpVerified = true;
     await user.save();
 
+    console.log("[DEBUG] OTP verified for user:", user.email);
+
     res.json({ message: "OTP verified", success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: err.message, success: false });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: error.message, success: false });
   }
 });
+
 
 
 
