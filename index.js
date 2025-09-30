@@ -236,15 +236,16 @@ app.post("/verify-otp", async (req, res) => {
 
     if (!user) return res.status(400).json({ message: "Invalid or expired OTP", success: false });
 
-    user.isOtpVerified = true; // ✅ mark OTP verified
+    user.isOtpVerified = true; // mark OTP verified
     await user.save();
 
-    console.log("User after OTP verification:", user); // DEBUG
     res.json({ message: "OTP verified", success: true });
-  } catch (err) {
-    res.status(500).json({ message: err.message, success: false });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: error.message, success: false });
   }
 });
+
 
 
 
@@ -329,17 +330,20 @@ app.post("/reset-password", async (req, res) => {
     user.createPassword = newPassword;
     user.confirmPassword = confirmPassword;
 
-    // ✅ clear OTP and verification flag
+    // Clear OTP and verification flag
     user.resetOtp = undefined;
     user.resetOtpExpiry = undefined;
     user.isOtpVerified = false;
+
     await user.save();
 
     res.json({ message: "Password reset successful", success: true });
-  } catch (err) {
-    res.status(500).json({ message: err.message, success: false });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: error.message, success: false });
   }
 });
+
 
 
 
