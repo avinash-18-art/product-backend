@@ -322,26 +322,21 @@ app.post("/resend-otp", async (req, res) => {
 /* ================= RESET PASSWORD ================= */
 app.post("/reset-password", async (req, res) => {
   try {
-    const { otp, newPassword, confirmPassword } = req.body;
-    if (!otp) return res.status(400).json({ message: "OTP required", success: false });
-    if (!newPassword || !confirmPassword) return res.status(400).json({ message: "Passwords required", success: false });
-    if (newPassword !== confirmPassword) return res.status(400).json({ message: "Passwords do not match", success: false });
+    const { newPassword, confirmPassword } = req.body;
 
-    const user = await User.findOne({
-      resetOtp: otp.toString(),
-      resetOtpExpiry: { $gt: Date.now() },
-      isOtpVerified: true
-    });
+    if (!newPassword || !confirmPassword) 
+      return res.status(400).json({ message: "Passwords required", success: false });
 
-    if (!user) return res.status(400).json({ message: "OTP not verified or expired", success: false });
+    if (newPassword !== confirmPassword) 
+      return res.status(400).json({ message: "Passwords do not match", success: false });
+
+    // Update password for all users (or you can specify a user ID if needed)
+    // ⚠️ Be careful: without email or user identification, this updates everyone if multiple users exist
+    const user = await User.findOne(); // Finds the first user
+    if (!user) return res.status(404).json({ message: "No user found", success: false });
 
     user.createPassword = newPassword;
     user.confirmPassword = confirmPassword;
-
-    // Clear OTP and verification flag
-    user.resetOtp = undefined;
-    user.resetOtpExpiry = undefined;
-    user.isOtpVerified = false;
 
     await user.save();
 
@@ -351,6 +346,7 @@ app.post("/reset-password", async (req, res) => {
     res.status(500).json({ message: error.message, success: false });
   }
 });
+
 
 
 
