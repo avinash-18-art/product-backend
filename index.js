@@ -263,8 +263,12 @@ app.post("/verify-otp", async (req, res) => {
 
 // ===== Login =====
 app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
+  let { email, password } = req.body;
+
   try {
+    // normalize email
+    email = email.trim().toLowerCase();
+
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
