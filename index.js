@@ -263,35 +263,29 @@ app.post("/verify-otp", async (req, res) => {
 
 // ===== Login =====
 app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
   try {
-    const user = await User.findOne({ email: email.trim().toLowerCase() });
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    const { email, password } = req.body;
 
-    const validPassword = await bcrypt.compare(password, user.createPassword);
-    if (!validPassword) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
+    if (!email || !password) return res.status(400).json({ message: "Email and password required" });
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) return res.status(401).json({ message: "Invalid credentials" });
 
     const token = jwt.sign(
-      {
-        fullname: `${user.firstName} ${user.lastName}`,
-        email: user.email,
-        phoneNumber: user.mobileNumber,
-      },
-      process.env.JWT_SECRET || "your_secret_key",
+      { fullname: `${user.firstName} ${user.lastName}`, email: user.email, phoneNumber: user.mobileNumber },
+      JWT_SECRET,
       { expiresIn: "1h" }
     );
 
-    res.status(200).json({ message: "Login successful", token });
+    res.json({ success: true, message: "Login successful", token });
   } catch (err) {
     console.error("Login error:", err.message);
     res.status(500).json({ message: "Login failed", error: err.message });
   }
 });
-
 
 
 
