@@ -263,33 +263,40 @@ app.post("/verify-otp", async (req, res) => {
 
 // ===== Login =====
 app.post("/login", async (req, res) => {
-  let { email, password } = req.body;
-
+  const { email, password } = req.body;
   try {
-    // normalize email
-    email = email.trim().toLowerCase();
-
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
-    const validPassword = await bcrypt.compare(password, user.password);
+    // Compare with createPassword (hashed during signup)
+    const validPassword = await bcrypt.compare(password, user.createPassword);
     if (!validPassword) {
-      return res.status(401).json({ success: false, message: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    // Generate JWT
     const token = jwt.sign(
-      { firstName: user.firstName, lastName:user.lastName , email: user.email, phone: user.phone, gst: user.gst, city: user.city, country: user.country, createPassword: hashedPassword,confirmPassword:hashedPassword},
-      JWT_SECRET,
+      {
+        fullname: `${user.firstName} ${user.lastName}`,
+        email: user.email,
+        phoneNumber: user.mobileNumber,
+      },
+      process.env.JWT_SECRET || "apjabdulkalam@545",
       { expiresIn: "1h" }
     );
 
-    return res.status(200).json({ success: true, message: "Login successful", token });
+    res.status(200).json({
+      message: "Login successful",
+      token,
+    });
   } catch (err) {
-    return res.status(500).json({ success: false, message: "Login failed", error: err.message });
+    console.error("Login error:", err.message);
+    res.status(500).json({ message: "Login failed", error: err.message });
   }
 });
+
 
 
 
