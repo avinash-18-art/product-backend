@@ -280,7 +280,7 @@ app.post("/login", async (req, res) => {
     }
 
     const token = jwt.sign(
-      { fullname: user.fullname, email: user.email, phoneNumber: user.phoneNumber },
+      { firstName: user.firstName, lastName:user.lastName , email: user.email, phone: user.phone, gst: user.gst, city: user.city, country: user.country, createPassword: hashedPassword,confirmPassword:hashedPassword},
       JWT_SECRET,
       { expiresIn: "1h" }
     );
