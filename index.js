@@ -61,86 +61,69 @@ function generateOtp() {
   return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
 }
 
+// signup page route//
+
+
+
+
 
 app.post("/signup", async (req, res) => {
   try {
-    const {
-      firstName,
-      lastName,
-      email,
-      mobileNumber,
-      gstNumber,
-      city,
-      country,
-      createPassword,
-      confirmPassword,
-    } = req.body;
+    const { firstName, lastName, email, mobileNumber, gstNumber, city, country, createPassword } = req.body;
+    if (!email) return res.status(400).json({ success: false, message: "Email required" });
 
-    // Validation
-    if (!firstName || !lastName || !email || !mobileNumber || !gstNumber || !city || !country || !createPassword || !confirmPassword) {
-      return res.status(400).json({ message: "All fields are required" });
-    }
+    let user = await User.findOne({ email });
 
-    if (createPassword !== confirmPassword) {
-      return res.status(400).json({ message: "Passwords do not match" });
-    }
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: "User already registered" });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(createPassword, 10);
-
-    // Generate OTP
-    const otp = generateOtp();
-
-    // Twilio SMS
-    try {
-      await twilioClient.messages.create({
-        body: `Your OTP is ${otp}`,
-        from: process.env.TWILIO_FROM_NUMBER,
-        to: mobileNumber.startsWith("+") ? mobileNumber : `+91${mobileNumber}`, // add country code if needed
+    if (!user) {
+      user = new User({
+        firstName,
+        lastName,
+        email,
+        mobileNumber,
+        gstNumber,
+        city,
+        country,
+        password: createPassword,
+        isOtpVerified: false,
       });
-      console.log("OTP SMS sent");
-    } catch (twilioError) {
-      console.error("Twilio error:", twilioError.message);
+    } else {
+      // If user exists and already verified, you may want to return an error:
+      if (user.isOtpVerified) {
+        return res.status(400).json({ success: false, message: "User already exists and verified" });
+      }
+      // else update fields as needed (but don't mark verified)
+      user.firstName = firstName || user.firstName;
+      user.lastName = lastName || user.lastName;
+      user.mobileNumber = mobileNumber || user.mobileNumber;
+      user.gstNumber = gstNumber || user.gstNumber;
+      user.city = city || user.city;
+      user.country = country || user.country;
+      user.password = createPassword || user.password;
     }
 
-    // Nodemailer Email
-    try {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: "Your OTP Code",
-        text: `Your OTP is ${otp}`,
-      });
-      console.log("OTP Email sent");
-    } catch (emailError) {
-      console.error("Nodemailer error:", emailError.message);
-    }
+    // generate and store OTP
+    const otp = genOtp();
+    user.resetOtp = otp.toString();
+    user.resetOtpExpiry = Date.now() + OTP_TTL_MS;
+    user.isOtpVerified = false;
 
-    // Save user
-    const newUser = new User({
-      firstName,
-      lastName,
-      email,
-      mobileNumber,
-      gstNumber,
-      city,
-      country,
-      createPassword: hashedPassword,
-      confirmPassword:hashedPassword, // store hashed password only
-      otp,
+    await user.save(); // important: save before sending email/response
+
+    // send OTP email (or SMS)
+    await transporter.sendMail({
+      from: "your@gmail.com",
+      to: user.email,
+      subject: "Your signup OTP",
+      text: `Your OTP is ${otp}. It expires in 5 minutes.`,
     });
 
-    await newUser.save();
+    // Debug/logging (helpful while testing)
+    console.log("[SIGNUP] OTP saved for", email, "otp:", otp, "expiresAt:", new Date(user.resetOtpExpiry).toISOString());
 
-    res.status(201).json({ message: "Registration successful, OTP sent" });
+    return res.json({ success: true, message: "OTP sent", otpSent: true });
   } catch (err) {
-    console.error("Signup error:", err.message);
-    res.status(500).json({ message: "Signup failed", error: err.message });
+    console.error("[SIGNUP ERROR]", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -226,32 +209,45 @@ app.post("/forgot-password", async (req, res) => {
 
 app.post("/verify-otp", async (req, res) => {
   try {
-    const { otp } = req.body;
+    const { email, otp } = req.body;
     if (!otp) return res.status(400).json({ message: "OTP required", success: false });
 
-    const user = await User.findOne({
-      resetOtp: otp.toString(),
-      resetOtpExpiry: { $gt: Date.now() }
-    });
+    // Try to find user by email+otp first (best), then fallback to otp-only (your existing behavior)
+    let user = null;
+    if (email) {
+      user = await User.findOne({
+        email,
+        resetOtp: otp.toString(),
+        resetOtpExpiry: { $gt: Date.now() },
+      });
+    }
+    if (!user) {
+      // fallback: find by otp only
+      user = await User.findOne({
+        resetOtp: otp.toString(),
+        resetOtpExpiry: { $gt: Date.now() },
+      });
+    }
 
-    console.log("[DEBUG] Entered OTP:", otp);
-    console.log("[DEBUG] User found:", user);
+    console.log("[VERIFY] Entered OTP:", otp, "email:", email, "found user:", !!user);
 
-    if (!user)
+    if (!user) {
       return res.status(400).json({ message: "Invalid or expired OTP", success: false });
+    }
 
+    // mark verified, clear otp fields
     user.isOtpVerified = true;
+    user.resetOtp = null;
+    user.resetOtpExpiry = null;
     await user.save();
 
-    console.log("[DEBUG] OTP verified for user:", user.email);
-
-    res.json({ message: "OTP verified", success: true });
+    console.log("[VERIFY] OTP verified for user:", user.email);
+    return res.json({ message: "OTP verified", success: true });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: error.message, success: false });
+    console.error("[VERIFY ERROR]", error);
+    return res.status(500).json({ message: error.message, success: false });
   }
 });
-
 
 
 
@@ -294,38 +290,30 @@ app.post("/login", async (req, res) => {
 /* ================= RESEND OTP (Forgot Password) ================= */
 app.post("/resend-otp", async (req, res) => {
   try {
-    const { value } = req.body;
-    const user = await User.findOne({
-      $or: [{ email: value }, { mobileNumber: value }],
-    });
-    if (!user) return res.json({ message: "User not found", success: false });
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ success: false, message: "Email required" });
 
-    const otp = generateOtp();
-    user.resetOtp = otp;
-    user.resetOtpExpiry = Date.now() + 10 * 60 * 1000;
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (user.isOtpVerified) return res.status(400).json({ success: false, message: "User already verified" });
+
+    const otp = genOtp();
+    user.resetOtp = otp.toString();
+    user.resetOtpExpiry = Date.now() + OTP_TTL_MS;
     await user.save();
 
-    if (value.includes("@")) {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: user.email,
-        subject: "Resent OTP",
-        text: `Your OTP is ${otp}`,
-      });
-      console.log("Resent OTP via Email");
-    } else {
-      await twilioClient.messages.create({
-        body: `Your OTP is ${otp}`,
-        from: process.env.TWILIO_FROM_NUMBER,
-        to: user.mobileNumber,
-      });
-      console.log("Resent OTP via SMS");
-    }
+    await transporter.sendMail({
+      from: "your@gmail.com",
+      to: user.email,
+      subject: "Your new OTP",
+      text: `Your new OTP is ${otp}. It expires in 5 minutes.`,
+    });
 
-    res.json({ message: "OTP resent successfully", success: true });
-  } catch (error) {
-    console.error("Resend OTP error:", error.message);
-    res.status(500).json({ message: "Server error", success: false });
+    console.log("[RESEND] OTP resent for", email, "otp:", otp);
+    return res.json({ success: true, message: "OTP resent", otpSent: true });
+  } catch (err) {
+    console.error("[RESEND ERROR]", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
