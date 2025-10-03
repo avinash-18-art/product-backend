@@ -61,10 +61,15 @@ function generateOtp() {
   return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
 }
 
-// signup page route//
+// debug-user//
 
 
-
+app.get("/debug-user", async (req, res) => {
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ ok: false, message: "email required" });
+  const user = await User.findOne({ email }).lean();
+  return res.json({ ok: true, user });
+});
 
 
 app.post("/signup", async (req, res) => {
@@ -73,25 +78,10 @@ app.post("/signup", async (req, res) => {
     if (!email) return res.status(400).json({ success: false, message: "Email required" });
 
     let user = await User.findOne({ email });
-
     if (!user) {
-      user = new User({
-        firstName,
-        lastName,
-        email,
-        mobileNumber,
-        gstNumber,
-        city,
-        country,
-        password: createPassword,
-        isOtpVerified: false,
-      });
+      user = new User({ firstName, lastName, email, mobileNumber, gstNumber, city, country, password: createPassword, isOtpVerified: false });
     } else {
-      // If user exists and already verified, you may want to return an error:
-      if (user.isOtpVerified) {
-        return res.status(400).json({ success: false, message: "User already exists and verified" });
-      }
-      // else update fields as needed (but don't mark verified)
+      // update fields but don't mark verified
       user.firstName = firstName || user.firstName;
       user.lastName = lastName || user.lastName;
       user.mobileNumber = mobileNumber || user.mobileNumber;
@@ -99,26 +89,24 @@ app.post("/signup", async (req, res) => {
       user.city = city || user.city;
       user.country = country || user.country;
       user.password = createPassword || user.password;
+      user.isOtpVerified = false;
     }
 
-    // generate and store OTP
     const otp = genOtp();
-    user.resetOtp = otp.toString();
-    user.resetOtpExpiry = Date.now() + OTP_TTL_MS;
-    user.isOtpVerified = false;
+    user.resetOtp = otp; // string
+    user.resetOtpExpiry = new Date(Date.now() + OTP_TTL_MS); // Date object in ms
+    await user.save(); // IMPORTANT: wait for save
 
-    await user.save(); // important: save before sending email/response
+    // Log values for debugging
+    console.log(`[SIGNUP] OTP for ${email}:`, otp, "expiresAt:", user.resetOtpExpiry.toISOString());
 
-    // send OTP email (or SMS)
+    // Send email (or SMS). Use try/catch but DO NOT respond before save()
     await transporter.sendMail({
       from: "your@gmail.com",
-      to: user.email,
-      subject: "Your signup OTP",
+      to: email,
+      subject: "Your OTP",
       text: `Your OTP is ${otp}. It expires in 5 minutes.`,
     });
-
-    // Debug/logging (helpful while testing)
-    console.log("[SIGNUP] OTP saved for", email, "otp:", otp, "expiresAt:", new Date(user.resetOtpExpiry).toISOString());
 
     return res.json({ success: true, message: "OTP sent", otpSent: true });
   } catch (err) {
@@ -209,43 +197,50 @@ app.post("/forgot-password", async (req, res) => {
 
 app.post("/verify-otp", async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    let { email, otp } = req.body;
     if (!otp) return res.status(400).json({ message: "OTP required", success: false });
+    otp = otp.toString().trim();
 
-    // Try to find user by email+otp first (best), then fallback to otp-only (your existing behavior)
+    // Prefer to find by email+otp. If email missing, fallback to otp-only (as your login does)
     let user = null;
     if (email) {
-      user = await User.findOne({
-        email,
-        resetOtp: otp.toString(),
-        resetOtpExpiry: { $gt: Date.now() },
-      });
-    }
-    if (!user) {
-      // fallback: find by otp only
-      user = await User.findOne({
-        resetOtp: otp.toString(),
-        resetOtpExpiry: { $gt: Date.now() },
-      });
+      user = await User.findOne({ email });
     }
 
-    console.log("[VERIFY] Entered OTP:", otp, "email:", email, "found user:", !!user);
+    if (!user) {
+      // fallback search by OTP only
+      user = await User.findOne({ resetOtp: otp });
+    }
 
     if (!user) {
+      console.log("[VERIFY] No user found for otp:", otp, "email:", email);
       return res.status(400).json({ message: "Invalid or expired OTP", success: false });
     }
 
-    // mark verified, clear otp fields
+    // Check expiry is a Date: handle both Date object and number
+    const expiry = user.resetOtpExpiry;
+    const expiryMs = expiry ? (expiry instanceof Date ? expiry.getTime() : Number(expiry)) : 0;
+    console.log("[VERIFY] Found user:", user.email, "savedOtp:", user.resetOtp, "expiryMs:", expiryMs, "now:", Date.now());
+
+    if (!user.resetOtp || user.resetOtp.toString().trim() !== otp) {
+      return res.status(400).json({ message: "Invalid OTP", success: false });
+    }
+
+    if (!expiryMs || expiryMs <= Date.now()) {
+      return res.status(400).json({ message: "OTP expired", success: false });
+    }
+
+    // success
     user.isOtpVerified = true;
     user.resetOtp = null;
     user.resetOtpExpiry = null;
     await user.save();
 
-    console.log("[VERIFY] OTP verified for user:", user.email);
+    console.log("[VERIFY] OTP success for", user.email);
     return res.json({ message: "OTP verified", success: true });
-  } catch (error) {
-    console.error("[VERIFY ERROR]", error);
-    return res.status(500).json({ message: error.message, success: false });
+  } catch (err) {
+    console.error("[VERIFY ERROR]", err);
+    return res.status(500).json({ message: err.message, success: false });
   }
 });
 
@@ -298,13 +293,13 @@ app.post("/resend-otp", async (req, res) => {
     if (user.isOtpVerified) return res.status(400).json({ success: false, message: "User already verified" });
 
     const otp = genOtp();
-    user.resetOtp = otp.toString();
-    user.resetOtpExpiry = Date.now() + OTP_TTL_MS;
+    user.resetOtp = otp;
+    user.resetOtpExpiry = new Date(Date.now() + OTP_TTL_MS);
     await user.save();
 
     await transporter.sendMail({
       from: "your@gmail.com",
-      to: user.email,
+      to: email,
       subject: "Your new OTP",
       text: `Your new OTP is ${otp}. It expires in 5 minutes.`,
     });
