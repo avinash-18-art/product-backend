@@ -20,12 +20,14 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = "apjabdulkalam@545";
 
 app.use(cors({
-  origin:"https://meesho-frontend-no7l.vercel.app",
-  methods:['GET','POST','PUT','DELETE'],
-  credentials:true, // If you need to send cookies or authentication headers with the request
-})
-);
-
+  origin: [
+    "https://meesho-frontend-no7l.vercel.app",
+    "https://www.priyug.shop",
+    "https://priyug.shop"   // add both with and without www
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true,
+}));
 // ===== Mongoose Connection =====
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
